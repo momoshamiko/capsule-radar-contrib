@@ -1232,7 +1232,8 @@ void setup() {
         ui_set_poweroff_cb([]() { g_powerOffAtMs = millis() + 600; });   // let 'Powering off' render first
 #endif
     gps_begin();       // LC76G GNSS (no-op if not the -G variant)
-    gps_set_idle_hook(display::sweepTick);   // keep the sweep moving during GPS reads (it never touches I2C)
+    gps_set_idle_hook(display::loopWithoutTouch);   // the screen keeps drawing during GPS reads (no I2C)
+    gps_set_touch_age_fn(display::inactiveMs);      // ...and a read does not start mid-touch
     battery_enable_codec_rail();   // power the ES8311 analog rail before audio init
 
     setenv("TZ", g_tz.c_str(), 1); tzset();   // SAVED zone (not the Spain default): right clock before NTP

@@ -319,6 +319,9 @@ bool begin() {
 
 void loop() { if (s_ready) lv_timer_handler(); }
 
+// The 2.1 reads touch only in LVGL's read callback, so a plain loop() does the same here.
+void loopWithoutTouch() { loop(); }
+
 // 0..255 -> PWM duty. Backlight is active-high on this board.
 void setBrightness(uint8_t v) {
     const uint32_t maxDuty = (1u << LCD_BL_PWM_BITS) - 1u;

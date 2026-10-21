@@ -34,7 +34,10 @@ uint16_t rotation();
 // visibility and the objects the sweep must not cover.
 bool sweepAvailable();          // buffers allocated: the compositor can own the sweep
 void sweepConfig(uint16_t ring565, uint16_t lead565, uint16_t ink565, bool sweep, bool pulse);
-void sweepTick();               // advance the sweep if a tick is due; no LVGL, no I2C (safe inside the GPS drain)
+void sweepTick();               // advance the sweep if a tick is due; no LVGL, no I2C
+// loop() while another driver owns the shared I2C bus (the GPS read waits ~0.3 s between its
+// steps): LVGL renders and animates as usual, but the touch panel is not read until it ends.
+void loopWithoutTouch();
 float sweepAngleDeg();          // where the sweep line is now: degrees, 0 = up (logical), clockwise
 
 } // namespace display

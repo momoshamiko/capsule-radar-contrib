@@ -936,6 +936,7 @@ static TouchQueue s_touchQ;
 static bool       s_touchOk = false;            // a touch controller is registered with LVGL
 static uint32_t   s_touchLastMs = 0;            // when the panel was last sampled
 static bool       s_touchReplaying = false;     // LVGL is calling back for the queued samples
+static bool       s_touchHeld = false;          // the shared I2C bus is busy (GPS read): no panel reads
 
 // Physical panel point -> logical UI point (inverse of the display rotation). False for the
 // black corners outside the logical UI at arbitrary angles.
@@ -968,10 +969,11 @@ static bool touch_to_logical(uint16_t x, uint16_t y, int *ox, int *oy) {
 }
 
 // Read the panel into the queue: always from the read callback (force), and at most every
-// TOUCH_SAMPLE_MS between flush strips. Both run on the LVGL task, never during the GPS
-// drain, which needs the I2C bus to itself (it ticks the compositor, not flush_cb).
+// TOUCH_SAMPLE_MS between flush strips. Both run on the LVGL task. Not while the GPS read
+// owns the I2C bus (loopWithoutTouch): LVGL then keeps the last state it was given, so a
+// finger that stays down is not mistaken for a lift.
 static void touch_sample(bool force) {
-    if (!s_touchOk) return;
+    if (!s_touchOk || s_touchHeld) return;
     const uint32_t now = millis();
     if (!force && now - s_touchLastMs < TOUCH_SAMPLE_MS) return;
     if (s_touchLastMs) perf::add(perf::TOUCH_GAP, (now - s_touchLastMs) * 1000);
@@ -1087,6 +1089,12 @@ void loop() {
         lv_timer_handler();
     }
     compose_step();
+}
+
+void loopWithoutTouch() {
+    s_touchHeld = true;
+    loop();
+    s_touchHeld = false;
 }
 
 void sweepConfig(uint16_t ring565, uint16_t lead565, uint16_t ink565, bool sweep, bool pulse) {

@@ -16,7 +16,7 @@ enum Slot : uint8_t {
     PUSH,       // panel pushes: LVGL strips and compositor windows (fill + transfer)
     COMPOSE,    // a compositor tick that drew something
     FEED,       // a new aircraft snapshot: radar::update, ui_on_data_updated, alert sounds
-    GPS,        // gps_poll(), including the compositor ticks it runs while it waits
+    GPS,        // gps_poll(), including the display loop it runs while it waits (also in LVGL)
     WEB,        // the web server's handleClient()
     TOUCH_GAP,  // time between two reads of the touch panel
     SLOT_COUNT

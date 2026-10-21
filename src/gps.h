@@ -6,10 +6,12 @@
 // rest is a no-op, so the standard board behaves exactly as before. Device-only; all the
 // I2C here runs on core 1 (loop), like the other shared-bus devices.
 #include <stdbool.h>
+#include <stdint.h>
 
 bool gps_begin();                            // probe for the LC76G; false if absent
 bool gps_present();
 void gps_set_idle_hook(void (*hook)());   // run during the drain's settle waits; must not touch I2C
+void gps_set_touch_age_fn(uint32_t (*fn)());   // ms since the last touch: no read starts mid-touch (gps.cpp)
 void gps_poll();                             // non-blocking state machine; call every loop()
 bool gps_has_fix();                          // a recent, valid position fix
 bool gps_location(double *lat, double *lon); // last fix (false if none)

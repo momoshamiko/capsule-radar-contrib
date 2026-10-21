@@ -4,8 +4,8 @@
 //   - a ~100 ms settle between EVERY step — crucially BETWEEN reading the queued length and
 //     writing the read-data command, or the module NACKs that write (endTransmission == 2);
 //   - the read-data command echoes the byte count you then read;
-//   - the whole transaction must run uninterrupted, so it's one blocking call (nothing else
-//     on core 1 runs meanwhile);
+//   - the whole transaction must run uninterrupted on the bus, so it's one blocking call
+//     (nothing else touches I2C meanwhile; the display keeps drawing, see gps_settle);
 //   - 100 kHz + a longer I2C timeout, because the module clock-stretches while preparing data.
 // MEMORY: the Wire RX buffer is sized ONCE at begin and never resized afterwards — calling
 // Wire.setBufferSize() at runtime fragments the internal heap and kills the mbedTLS handshake
@@ -207,8 +207,9 @@ static void gps_unstick() {
 
 // Waits inside the read path. The LC76G needs the I2C bus to itself for the whole drain
 // (other bus traffic between steps makes it stop answering), so during these waits only
-// the idle hook runs: the display's sweep compositor, which uses QSPI and never touches
-// I2C. Without a hook this is a plain delay(), as before.
+// the idle hook runs: the display's loop without its touch reads (display::loopWithoutTouch),
+// so the screen keeps drawing and animating while nothing else uses I2C. Without a hook
+// this is a plain delay(), as before.
 static void (*s_idleHook)() = nullptr;
 void gps_set_idle_hook(void (*hook)()) { s_idleHook = hook; }
 static void gps_settle(uint32_t ms) {
@@ -216,6 +217,15 @@ static void gps_settle(uint32_t ms) {
     const uint32_t t0 = millis();
     while (millis() - t0 < ms) { s_idleHook(); delay(1); }
 }
+
+// The touch panel goes unread for a whole drain (~0.3 s), so a drain does not start while
+// the screen is in use: within GPS_TOUCH_QUIET_MS of the last touch it waits, but never
+// past GPS_DEFER_MAX_MS since the last drain, and only once the module's output is trimmed
+// to GGA+RMC (a few hundred bytes in that time, far under GPS_READ_MAX: no overflow, #24).
+#define GPS_TOUCH_QUIET_MS  1500
+#define GPS_DEFER_MAX_MS    6000
+static uint32_t (*s_touchAge)() = nullptr;
+void gps_set_touch_age_fn(uint32_t (*fn)()) { s_touchAge = fn; }
 
 // Ask how many bytes are queued. Retries, since prior shared-bus traffic can briefly
 // leave the module unable to answer the first attempt. Returns true when the module
@@ -319,6 +329,8 @@ void gps_poll() {
     const uint32_t interval = (s_deadDrains >= GPS_DEAD_TO_BACKOFF) ? GPS_POLL_DEAD_MS : GPS_POLL_MS;
     if (last != 0 && now - last < interval) return;
     if ((int32_t)(now - s_settleUntil) < 0) return;              // still booting after a reset
+    if (!s_needCfg && s_touchAge && s_touchAge() < GPS_TOUCH_QUIET_MS &&
+        last != 0 && now - last < GPS_DEFER_MAX_MS) return;      // the screen is in use
     last = now;
 
     // Stuck module: nothing for GPS_STALL_MS (answering or not) -> restart it via its RESET line.
