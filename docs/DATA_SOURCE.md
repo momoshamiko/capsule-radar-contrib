@@ -89,7 +89,7 @@ exchange (`AdsbClient::lastResponseMs()`, so a 403 counts) and WiFi being down r
 the pacer skipped does **not**: fast TLS failures open the silence gaps above, the poll skips
 inside them, and counting those skips kept the restart from ever coming. A feed stuck for any
 other reason — every provider refusing us, or the internet down behind a working WiFi — keeps the
-radar running with the amber HUD warning instead of rebooting it every three minutes, but not
+radar running with the amber "DATA OLD" note instead of rebooting it every three minutes, but not
 forever: a backstop restarts the device regardless of the heap once WiFi has been up and no
 provider has answered for more than 30 minutes (`ADSB_STUCK_HARD_MS`). Any answer in that time
 resets the clock, so an outage that ends sooner never triggers it. The backstop's clock also

@@ -57,6 +57,9 @@
  *=======================*/
 #define LV_DRAW_COMPLEX 1
 #define LV_SHADOW_CACHE_SIZE 0
+/* Each cached radius takes ~6 bytes per pixel of radius from LV_MEM_SIZE (~1.4 KB at the
+   screen's radius). With 10 entries the pool ran out in the simulator one second after boot.
+   The big circles (scope rings, round page panels) no longer go through masks per frame. */
 #define LV_CIRCLE_CACHE_SIZE 4
 #define LV_DISP_ROT_MAX_BUF (10 * 1024)
 
@@ -77,13 +80,16 @@
 /*==================
    FONTS
  *==================*/
-#define LV_FONT_MONTSERRAT_12 1
-#define LV_FONT_MONTSERRAT_14 1
-#define LV_FONT_MONTSERRAT_16 1
-#define LV_FONT_MONTSERRAT_18 1   /* large-text mode: 14 -> 18 */
-#define LV_FONT_MONTSERRAT_20 1   /* large-text mode: 16 -> 20 */
-#define LV_FONT_MONTSERRAT_28 1
-#define LV_FONT_DEFAULT &lv_font_montserrat_14
+/* The UI uses one pixel font, Departure Mono, 1-bit at 11/22/33 px (src/fonts/README.md).
+   No Montserrat: the UI draws its own icons, so no LV_SYMBOL glyphs are needed. */
+#define LV_FONT_MONTSERRAT_12 0
+#define LV_FONT_MONTSERRAT_14 0
+#define LV_FONT_MONTSERRAT_16 0
+#define LV_FONT_MONTSERRAT_18 0
+#define LV_FONT_MONTSERRAT_20 0
+#define LV_FONT_MONTSERRAT_28 0
+#define LV_FONT_CUSTOM_DECLARE LV_FONT_DECLARE(font_px11) LV_FONT_DECLARE(font_px22) LV_FONT_DECLARE(font_px33)
+#define LV_FONT_DEFAULT &font_px22
 
 /*==================
    WIDGETS

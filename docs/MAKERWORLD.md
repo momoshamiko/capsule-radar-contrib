@@ -49,9 +49,9 @@ speaker, a small kickstand foot, and an engraved logo. Snap-/screw-together, no 
 ### Features
 - 🛩️ **Live traffic** from a free ADS-B feed (airplanes.live, fallback adsb.lol),
   refreshed every couple of seconds.
-- 👆 **Touch**: tap an aircraft → full detail card + **route** (origin → destination).
+- 👆 **Touch**: tap an aircraft → full detail card + **route** (origin → destination); its X closes it.
   Swipe between **Radar / List / Stats** views.
-- 🎨 **Four themes** (long-press to switch): phosphor scope, a retro "orb" radar skin,
+- 🎨 **Four themes** (hold the screen 1.5 s to switch): phosphor scope, a retro "orb" radar skin,
   amber CRT, and night-vision green.
 - 🔁 **On-screen zoom** button (10–100 km) and a **web config page** at
   `capsuleradar.local` (centre point, range, theme, brightness, sound, dim timer).

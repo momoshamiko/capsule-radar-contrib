@@ -30,14 +30,15 @@ A live **ADS-B aircraft radar** for the **Waveshare ESP32-S3-Touch-AMOLED-1.75**
 ## Features
 
 - **Live traffic** from [airplanes.live](https://airplanes.live), [adsb.fi](https://adsb.fi/) and [adsb.lol](https://adsb.lol) (free, non-commercial), updated every couple of seconds. Each provider is paced independently, so one refusing or rate-limiting does not stop the feed. Memory-safe streaming parser with a hard aircraft cap. *Note: airplanes.live is now [contributor-only](https://airplanes.live/get-started/) — if you run one of their feeders, your radar uses their API automatically from the same network (no keys, nothing to configure); otherwise it quietly falls back to adsb.fi / adsb.lol.*
-- **Four themes** (long-press the screen to cycle, or pick on the web; remembered across reboots):
+- **Pixel look**: one crisp pixel font ([Departure Mono](https://departuremono.com)), square frames and one colour palette per theme on every screen — scope, card, list, stats, weather, status pull-down, idle clock and splash. Low traffic (under 3,000 ft) is pink, so red always means an emergency. Plane labels move around their glyphs to stay readable and clear of each other.
+- **Four themes** (hold one finger still on the radar for 1.5 s, then lift, to cycle — the new theme's name shows for a moment — or pick on the web; remembered across reboots):
   - **Phosphor** — green-on-black radar scope: rings, animated sweep, aircraft glyphs rotated by heading and color-coded by altitude, fading trails, emergency halo.
   - **Orb** — green gradient + grid scope: the 7 nearest aircraft as yellow orbs emitting waves, off-range traffic as edge arrows pointing its way, orange target rings.
   - **Amber CRT** and **Military** — the same scope retinted (warm amber / night-vision green).
-- **Touch** (CST9217): tap an aircraft → detail card (callsign, type, altitude, vertical speed, ground speed, distance, ground track (HDG), squawk, and **origin → destination** looked up from adsbdb, cached in NVS). The on-screen zoom button cycles the zoom range (10–100 km; the web page goes to 150 km). Swipe between **Radar / List / Stats** (circular layouts).
+- **Touch** (CST9217): tap an aircraft → detail card (callsign, type, altitude, vertical speed, ground speed, distance, ground track (HDG), squawk, and **origin → destination** looked up from adsbdb, cached in NVS); the **X** just outside the card's right end (above the card, or below it when the card sits at the top), or a tap on empty radar, closes it. The on-screen zoom button cycles the zoom range (10–100 km; the web page goes to 150 km). Swipe between **Radar / List / Stats** (circular layouts).
 - **Boot splash** + **alert pings** (ES8311 speaker): a soft ping when a new aircraft enters range, an urgent double-beep for emergency/military — volume & mute on the web page.
 - **Smooth motion**: aircraft glyphs glide between polls (interpolated) instead of jumping, using cheap partial redraws.
-- **Top HUD**: WiFi status (amber if the data feed is failing), in-range aircraft count, NTP/RTC clock, **battery %** (charging bolt, red when low), and the date. The Stats view footer shows how to reach the config page (`capsuleradar.local` + IP).
+- **Status pull-down**: the radar has no top row. Drag down from the top of the radar to see the time and date, WiFi, GPS satellites (GPS boards), the in-range aircraft count, **battery %** (charging bolt, red when low), where the data comes from, and a **THEME** button; it closes with a drag up, a tap below it, or by itself after 8 s. A small note under the N shows **NO WIFI**, **DATA OLD** or **LOW BATTERY** only when one applies. The idle clock shows the date. The Stats view footer shows how to reach the config page (`capsuleradar.local` + IP).
 - **Battery aware** (AXP2101): shows charge level, warns when low, and slows the feed poll rate on battery to save power.
 - **Real-time clock** (PCF85063): keeps the time/date across power loss, so the clock is right even before/without WiFi; re-synced from NTP when online.
 - **Smart brightness**: configurable idle auto-dim (no touch), and **face-down sleep** (QMI8658 IMU — flip it over to turn the screen off; a touch or turning it back up wakes it).
@@ -145,9 +146,16 @@ Browse to `http://capsuleradar.local/` (or the device IP) on the same WiFi to se
 src/
   config.h           pins + tunables (Dénia, Spain by default)
   main.cpp           tasks, WiFi/NTP, web config, brightness/IMU glue
-  display.*          CO5300 panel (co5300.*, QSPI + DMA) + LVGL bring-up
-  radar_view.*       the radar scope, aircraft, themes
-  ui.*               views (radar/list/stats) + detail card + HUD
+  co5300.*           CO5300 panel driver (QSPI with DMA)
+  display.*          LVGL bring-up, rotation, the sweep compositor
+  perf.*             render-path timing counters (GET /perf)
+  radar_view.*       the radar scope, aircraft, labels, themes
+  label_layout.h     plane-label placement (host-tested)
+  ui.*               views (radar/list/stats/weather) + detail card + status pull-down
+  ui_tokens.h        design tokens: palette per theme, sizes, spacing
+  ui_style.*         shared LVGL styles built from the tokens
+  ui_icons.*         1-bit icons (generated by tools/gen_ui_icons.py)
+  fonts/             Departure Mono, 1-bit at 11/22/33 px
   touch_cst9217.*    capacitive touch driver
   imu_qmi8658.*      accelerometer (face-down sleep)
   battery.*          AXP2101 battery gauge
@@ -171,4 +179,4 @@ The reference board is the **Waveshare ESP32-S3-Touch-AMOLED-1.75**, but other b
 
 ## Data & license
 
-**Firmware / code: [MIT](LICENSE)** — fork and build on it freely (keep the notice). Aircraft data: **airplanes.live** (free, **non-commercial / educational** — exactly this project; be polite with request cadence). Routes: **adsbdb.com** (free). Personal/hobby project. The 3D-printed enclosure is published on [MakerWorld](https://makerworld.com/en/models/2907695-capsule-radar-live-flight-radar-desk-gadget) (enclosure + this firmware).
+**Firmware / code: [MIT](LICENSE)** — fork and build on it freely (keep the notice). Aircraft data: **airplanes.live** (free, **non-commercial / educational** — exactly this project; be polite with request cadence). Routes: **adsbdb.com** (free). Font: **Departure Mono** by Helena Zhang, [SIL Open Font License 1.1](src/fonts/OFL-DepartureMono.txt). Personal/hobby project. The 3D-printed enclosure is published on [MakerWorld](https://makerworld.com/en/models/2907695-capsule-radar-live-flight-radar-desk-gadget) (enclosure + this firmware).

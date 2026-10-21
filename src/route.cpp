@@ -26,7 +26,7 @@ bool route_pending(char *callOut, size_t n) {
 }
 
 // Fold UTF-8 Latin accents (á, ñ, ü...) to ASCII so the LVGL font can render them
-// (Montserrat has no accented glyphs -> they would show as a missing-glyph box).
+// (the UI's pixel font is ASCII plus a few symbols; anything else would draw nothing).
 static void ascii_fold(const char *in, char *out, size_t n) {
     size_t o = 0;
     for (size_t i = 0; in && in[i] && o + 1 < n;) {

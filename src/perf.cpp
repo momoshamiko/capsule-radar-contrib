@@ -2,7 +2,12 @@
 #include "perf.h"
 #include "display.h"
 #include "ui.h"
+#if !defined(BOARD_LCD21)
 #include "co5300.h"
+#define PERF_QSPI_KHZ() co5300::clockKhz()
+#else
+#define PERF_QSPI_KHZ() 0               // the LCD-2.1 panel has no QSPI clock
+#endif
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -44,11 +49,7 @@ size_t report(char *out, size_t n) {
     const auto put = [&](const char *fmt, auto... args) {
         if (k < n) k += (size_t)snprintf(out + k, n - k, fmt, args...);
     };
-#if !defined(BOARD_LCD21)     // co5300.cpp (the QSPI panel) is not built for the LCD 2.1
-    put("up_ms %lu qspi_khz %d\n", (unsigned long)millis(), co5300::clockKhz());
-#else
-    put("up_ms %lu\n", (unsigned long)millis());
-#endif
+    put("up_ms %lu qspi_khz %d\n", (unsigned long)millis(), PERF_QSPI_KHZ());
     put("# slot count total_us max_us (max since the last read)\n");
     for (int i = 0; i < SLOT_COUNT; ++i) {
         put("%s %lu %llu %lu\n", NAMES[i], (unsigned long)s_acc[i].count,

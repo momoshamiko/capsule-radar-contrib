@@ -103,7 +103,7 @@ static const float WEB_RANGE_KM[]   = {10.0f, 15.0f, 25.0f, 30.0f, 50.0f, 100.0f
 
 // ---------- Touch ----------
 // LVGL reads the touch panel only between frames, and a swipe redraws the whole screen on
-// every frame (~150-200 ms on the device). display.cpp also samples the panel between the
+// every frame (~50-60 ms on the device). display.cpp also samples the panel between the
 // flush strips of a frame and replays the samples to LVGL in order (touch_queue.h).
 // At most one panel read per TOUCH_SAMPLE_MS between strips. Keep it at LVGL's read period
 // (LV_INDEV_DEF_READ_PERIOD in include/lv_conf.h): LVGL predicts a swipe's throw from the
@@ -111,6 +111,27 @@ static const float WEB_RANGE_KM[]   = {10.0f, 15.0f, 25.0f, 30.0f, 50.0f, 100.0f
 #define TOUCH_SAMPLE_MS         20
 #define TOUCH_NODATA_RELEASE_MS 100  // failed reads for this long while pressed count as a lift
 #define TOUCH_QUEUE_LEN         32   // samples held between two LVGL reads (a full frame adds ~10)
+
+// ---------- Look (design tokens live in ui_tokens.h) ----------
+#define UI_TOAST_MS         1500    // the "THEME · ..." note after the theme hold
+// A still hold on the radar this long cycles the theme (on lift). LVGL's 400 ms long press
+// caught firm taps: tapping off a plane card with a half-second press changed the theme.
+#define UI_THEME_HOLD_MS    1500
+#define UI_CARD_CLOSE_HIT   12      // the plane card's X: tap area grown this much on each side
+#define UI_FEED_STALE_S     18      // feed older than this: status note "DATA OLD", Stats age in warn colour
+#define UI_BATT_LOW_PCT     15      // battery at or below this (not charging): "LOW BATTERY" note, red fill
+// Status pull-down: a press that starts at y <= PULL_START_Y on the radar and
+// moves PULL_MOVE_PX down (more down than sideways) opens it; PULL_MOVE_PX up closes it; it
+// closes by itself UI_PULL_CLOSE_MS after the last touch on it.
+#define PULL_START_Y        90
+#define PULL_MOVE_PX        40
+#define UI_PULL_CLOSE_MS    8000
+// Plane labels on the scope (label_layout.h): circle they must stay inside, glyph half-size
+// without / with a ring (emergency r16+3, selection r19+2), gap between name and altitude.
+#define LABEL_CIRCLE_R      228
+#define LABEL_GLYPH_R       12
+#define LABEL_RING_R        21
+#define LABEL_LINE_GAP      2
 
 // ---------- ADS-B API (free, non-commercial) ----------
 // Providers are tried in this order; each is paced independently (see AdsbClient).
@@ -145,7 +166,7 @@ static const float WEB_RANGE_KM[]   = {10.0f, 15.0f, 25.0f, 30.0f, 50.0f, 100.0f
 // minute; a provider that stays dead while another one answers still waits the full gap.
 // The 429 spacing is not capped. See AdsbPacer::cooling().
 #define ADSB_SILENCE_OUTAGE_MAX_MS 10000UL
-#define ADSB_FEED_STALE_MS     60000UL      // no successful fetch for this long -> HUD warning
+#define ADSB_FEED_STALE_MS     60000UL      // no successful fetch for this long -> feed warning
 // The feed-stuck watchdog (FeedWatchdog in feed_watchdog.h) calls the feed stuck when WiFi
 // is up and no provider has answered for ADSB_STUCK_MS. It may then reboot only when the
 // largest free INTERNAL heap block is below ADSB_STUCK_MIN_LARGEST_BLOCK: a TLS handshake

@@ -319,9 +319,6 @@ bool begin() {
 
 void loop() { if (s_ready) lv_timer_handler(); }
 
-// The 2.1 reads touch only in LVGL's read callback, so a plain loop() does the same here.
-void loopWithoutTouch() { loop(); }
-
 // 0..255 -> PWM duty. Backlight is active-high on this board.
 void setBrightness(uint8_t v) {
     const uint32_t maxDuty = (1u << LCD_BL_PWM_BITS) - 1u;
@@ -344,9 +341,13 @@ uint16_t rotation() { return s_rot; }
 bool sweepAvailable() { return false; }
 void sweepConfig(uint16_t, uint16_t, uint16_t, bool, bool) {}
 void sweepTick() {}
-float sweepAngleDeg() { return 0.0f; }   // never asked: sweepAvailable() is false here
 
 uint32_t inactiveMs() { return s_ready ? lv_disp_get_inactive_time(NULL) : 0; }
+
+// No compositor on this panel: the sweep is drawn by LVGL, so there is no sweep angle to report.
+float sweepAngleDeg() { return 0.0f; }
+// The 2.1 has no GPS (gps.cpp runs only on the -G boards), so no read needs the I2C bus alone.
+void loopWithoutTouch() { loop(); }
 
 } // namespace display
 

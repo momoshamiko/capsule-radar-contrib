@@ -9,7 +9,7 @@
 //   - WiFi is up and no provider has answered for ADSB_STUCK_MS, and
 //   - the largest free internal heap block is below ADSB_STUCK_MIN_LARGEST_BLOCK.
 // A feed stuck with a healthy heap (every provider refusing us, or the internet down behind
-// a working WiFi) logs once per episode and keeps running with the amber HUD warning; both
+// a working WiFi) logs once per episode and keeps running with the amber "DATA OLD" note; both
 // used to reboot the device every three minutes.
 //
 // Because a heap figure cannot show every way a feed gets stuck, there is also an

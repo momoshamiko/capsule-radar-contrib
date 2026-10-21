@@ -44,11 +44,12 @@ engraved logo. No soldering — the Waveshare board carries all the electronics.
 **Touch & details**
 - **Tap an aircraft** to open a detail card: callsign, type, altitude, vertical speed,
   ground speed, distance, bearing, squawk, and the **origin → destination route**
-  (looked up online and cached so the same flight isn't re-queried).
+  (looked up online and cached so the same flight isn't re-queried). Tap the **X** next to
+  the card to close it.
 - **Swipe** between three circular views: **Radar**, **List**, and **Stats**.
 - **On-screen zoom button** cycles the display range (10 / 20 / 30 / 50 / 100 km) and
   shows the current value.
-- **Long-press** the screen to cycle the visual theme.
+- **Hold** one finger still on the screen for 1.5 seconds, then lift, to cycle the visual theme.
 
 **Four themes** (remembered across reboots)
 - **Phosphor** — classic green-on-black radar scope: rings, sweep, altitude colours.
@@ -57,9 +58,11 @@ engraved logo. No soldering — the Waveshare board carries all the electronics.
 - **Amber CRT** — warm amber monochrome scope.
 - **Military** — night-vision green scope.
 
-**Status HUD**
-- Wi-Fi indicator (turns **amber** if the data feed is failing), in-range aircraft count,
-  clock, **battery %** (charging bolt; turns **red** when low), and the date.
+**Status pull-down**
+- The radar has no top row: drag down from the top to see the clock and date, Wi-Fi, GPS,
+  the in-range aircraft count, **battery %** (charging bolt; **red** when low) and a THEME
+  button. A small note under the N says **NO WIFI**, **DATA OLD** or **LOW BATTERY** only
+  when one applies.
 
 **Sound (built-in speaker)**
 - A soft **ping** when a new aircraft enters range, and an urgent **double-beep** for
@@ -193,10 +196,10 @@ Once it's running, you can update wirelessly:
 
 | Action | Gesture |
 |---|---|
-| Inspect an aircraft | **Tap** it → detail card with route |
+| Inspect an aircraft | **Tap** it → detail card with route; **X** closes it |
 | Switch view | **Swipe** left/right (Radar ↔ List ↔ Stats) |
 | Change zoom range | **Tap the range button** (⟳ … km) |
-| Change theme | **Long-press** the screen |
+| Change theme | **Hold** the screen still for 1.5 s, then lift |
 | Turn the screen off | **Flip it face-down** |
 | Find the config page | See the **Stats** view footer (shows `capsuleradar.local` + IP) |
 
@@ -204,8 +207,8 @@ Once it's running, you can update wirelessly:
 
 ## Troubleshooting
 
-- **No aircraft showing** — check Wi-Fi (the HUD Wi-Fi icon is red if disconnected, amber
-  if the feed is failing) and that your centre point is set near you. Quiet areas/times
+- **No aircraft showing** — check Wi-Fi (a red **NO WIFI** note shows under the N when it is
+  disconnected, an amber **DATA OLD** note when the feed is failing) and that your centre point is set near you. Quiet areas/times
   simply have little traffic.
 - **Can't reach `capsuleradar.local`** — use the **IP** shown on the Stats view instead.
 - **No sound** — check Volume isn't 0 / Mute is off on the web page, and that the speaker

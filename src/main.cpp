@@ -89,8 +89,8 @@ static volatile bool         g_rtcSyncPending = false;               // SNTP syn
 static std::vector<Aircraft> g_snap;                                 // last snapshot (instant re-render on zoom)
 static volatile bool         g_requery = false;                      // range changed -> adsb_task re-begins
 static float                 g_requeryKm = 0.0f;
-static volatile bool         g_feedOk = true;                        // ADS-B feed healthy? (HUD warning)
-static volatile uint32_t     g_lastFeedOkMs = 0;                     // millis() of the last good poll (HUD staleness)
+static volatile bool         g_feedOk = true;                        // ADS-B feed healthy? (feed warning)
+static volatile uint32_t     g_lastFeedOkMs = 0;                     // millis() of the last good poll (status note / Stats age)
 static volatile uint32_t     g_powerOffAtMs = 0;                     // !=0: AXP2101 power-off when millis() reaches it
 static volatile uint32_t     g_rebootAtMs = 0;                       // !=0: reboot when millis() reaches it (clean start after WiFi config)
 static bool                  g_pmicOk = false;                       // AXP2101 answered (powers the power-off paths)
@@ -193,7 +193,7 @@ static void adsb_task(void*) {
             if (lastPoll == 0 || nowMs - lastPoll >= pollInterval) {  // aircraft feed
                 lastPoll = nowMs;
                 static int failCount = 0;
-                // poll() tries the fallback provider after a primary failure; keep the HUD
+                // poll() tries the fallback provider after a primary failure; keep the status
                 // healthy through isolated misses and warn only after a sustained outage.
                 if (g_adsb.poll(fresh)) {
                     Serial.printf("[adsb] fetched %u aircraft from %s\n", (unsigned)fresh.size(), g_adsb.lastHost());
@@ -201,7 +201,7 @@ static void adsb_task(void*) {
                     g_feedOk = true;
                     const uint32_t receivedMs = millis();
                     watchdog.onPoll(FeedWatchdog::FETCHED, receivedMs);
-                    g_lastFeedOkMs = receivedMs;      // HUD: mark data as fresh
+                    g_lastFeedOkMs = receivedMs;      // status: mark data as fresh
 
                     const bool publish = snapshotGate.shouldPublish(
                         !fresh.empty(), receivedMs, AC_STALE_MS);
@@ -233,7 +233,7 @@ static void adsb_task(void*) {
                 } else {
                     Serial.println("[adsb] poll failed");
                     watchdog.onPoll(FeedWatchdog::FAILED, nowMs);
-                    if (++failCount >= 5) g_feedOk = false;   // sustained outage -> HUD warning
+                    if (++failCount >= 5) g_feedOk = false;   // sustained outage -> feed warning
                 }
             }
             // Forecasts change slowly. Fetch only after the live ADS-B poll has had priority.
@@ -386,7 +386,7 @@ static void onRangeChange(float km) {
     ui_on_data_updated();
 }
 
-// Persist the visual theme in NVS (called when the user long-presses to switch).
+// Persist the visual theme in NVS (called when the user holds the radar to switch it).
 static void saveTheme(int t) {
     Preferences p;
     p.begin("capsuleradar", false);
@@ -1082,12 +1082,12 @@ static void handleGps() {   // auto-set the centre point from the LC76G GPS (-G 
     g_web.send(200, "text/plain", "ok");
 }
 
-// Render-path timing counters (perf.h). Reading them changes nothing; ?bench=1 also runs the
-// benchmark, which pages the UI, so it needs the page header like a live setting.
+// Render-path timing counters (perf.h). Reading them changes nothing; ?bench=1 also runs
+// the benchmark, which pages the UI, so it needs the page header like a live setting.
 static void handlePerf() {
     const bool bench = g_web.hasArg("bench");
     if (bench && refuseUnlessPageFetch()) return;
-    static const size_t BUFSZ = 4096;             // room for the per-task lines after the counters
+    static const size_t BUFSZ = 4096;
     static char *buf = (char *)ps_malloc(BUFSZ);   // PSRAM, like the config page buffer
     if (!buf) return;
     size_t k = perf::report(buf, BUFSZ);
@@ -1436,7 +1436,7 @@ static void loop_pass() {
         ui_on_data_updated();
     }
 
-    // periodic: HUD clock + wifi/battery indicators
+    // periodic: clock, WiFi and battery for the status note and the pull-down
     static uint32_t lastStatus = 0;
     if (millis() - lastStatus > 5000) {
         lastStatus = millis();
@@ -1465,8 +1465,9 @@ static void loop_pass() {
         // "fresh" = we got aircraft data recently. Catches a stalled feed (weak WiFi dropping
         // polls intermittently) that never trips the consecutive-fail counter -> aircraft
         // freeze but the icon would otherwise stay white.
-        const bool feedFresh = wifiUp && (millis() - g_lastFeedOkMs < 18000UL);
+        const bool feedFresh = wifiUp && (millis() - g_lastFeedOkMs < (uint32_t)UI_FEED_STALE_S * 1000UL);
         ui_set_status(wifiUp, feedFresh, rssi, clk);
+        ui_set_feed_age(g_lastFeedOkMs ? millis() - g_lastFeedOkMs : UINT32_MAX);   // Stats "Updated"
         char net[112];
         if (WiFi.status() == WL_CONNECTED)
             // IP + the active centre point (helps users verify what actually got saved)
@@ -1482,7 +1483,7 @@ static void loop_pass() {
         // false once the battery is FULL, which used to slow polling to 5 s on a
         // USB-tethered, fully charged device.
         g_onBattery = bpresent && !battery_vbus_in();
-        // GPS HUD/Stats: 0 = off/no module (hidden), 1 = acquiring, 2 = fix
+        // GPS for the pull-down and Stats: 0 = off/no module (no line), 1 = acquiring, 2 = fix
         const int gpsState = (!g_useGps || !gps_present()) ? 0 : (gps_has_fix() ? 2 : 1);
         ui_set_gps(gpsState, gps_satellites(), gps_altitude_m());
         // Write the RTC only after a REAL SNTP sync (flagged by the callback in setup),
@@ -1538,7 +1539,6 @@ static void loop_pass() {
     if (showClock != radar::clockRequested() && radar::setClock(showClock))
         Serial.println(showClock ? "[clock] idle: radar -> clock" : "[clock] radar is back");
     applyBrightness();
-
 }
 
 void loop() {

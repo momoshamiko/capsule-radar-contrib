@@ -1,7 +1,7 @@
+#if !defined(BOARD_LCD21)      // the CO5300 QSPI panel (1.75 + 1.43); the LCD-2.1 build has none
 // CO5300 AMOLED over QSPI with double-buffered DMA (see co5300.h).
 // The init sequence, reset timing and framing are Arduino_GFX 1.6.4's Arduino_CO5300 +
 // Arduino_ESP32QSPI (BSD licence), which this firmware used before.
-#if !defined(BOARD_LCD21)     // the LCD 2.1 has no CO5300: display_st7701.cpp drives its RGB panel
 #include "co5300.h"
 #include "config.h"
 #include "perf.h"
@@ -275,5 +275,4 @@ bool begin() {
 }
 
 } // namespace co5300
-
 #endif  // !BOARD_LCD21

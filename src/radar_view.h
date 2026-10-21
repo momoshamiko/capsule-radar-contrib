@@ -5,6 +5,7 @@
 #include <vector>
 #include "aircraft.h"
 #include "clock_face.h"
+#include "label_layout.h"
 
 struct RadarSettings {
     double homeLat, homeLon;
@@ -55,10 +56,16 @@ void select(int idx);
 // place. False (selection unchanged) when that aircraft has left the feed.
 bool selectHex(const char* hex);
 bool selected(AcInfo& out);                 // false if nothing selected/visible
+// Where the selected plane is drawn now (logical px). False when nothing is selected or the
+// plane is not on the scope. The card uses it to stay clear of the plane it describes.
+bool selectedScreenPos(int16_t* x, int16_t* y);
+// Screen areas plane labels must stay clear of (status note, N, zoom chip, page dots, open card).
+// Copied; up to 8. Labels are re-placed at once.
+void setLabelObstacles(const LlRect* r, int n);
 
 // Snapshot access for the list / stats views.
 int  count();
-int  countInRange();                        // aircraft within the display range (for the HUD)
+int  countInRange();                        // aircraft within the display range (for the pull-down)
 bool info(int idx, AcInfo& out);
 
 // Sweep self-animates via an internal timer; kept for API compatibility.

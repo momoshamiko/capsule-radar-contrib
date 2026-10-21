@@ -12,6 +12,7 @@
 #include "coastline.h"
 #include "airports.h"
 #include "clock_face.h"
+#include "ui_style.h"
 #include <lvgl.h>
 #include "src/draw/sw/lv_draw_sw.h"    // lv_draw_sw_ctx_t: the cache renderer's draw context
 #include <math.h>
@@ -62,13 +63,16 @@
 #define TRAIL_MAX         7
 #define TAP_RADIUS_PX     40    // generous finger-tap catch radius (picks the nearest glyph within it)
 #define FLOW_MAX          700
-#define INV_MERGE_PAD_PX  24                 // partial invalidation: merge areas this close (px)
-#define INV_MAX_AREAS     12                 // past this many areas, take their union instead
 #define FLOW_OPA          55
 #define ORB_BLIPS      7
 #define ORB_ARROWS     8
 #define BALL_R            9
 #define WAVE_EXPAND       28.0f
+// Partial invalidation (update(), flow cache rects): areas nearer than INV_MERGE_PAD_PX
+// merge into one, and past INV_MAX_AREAS the union is taken instead — LVGL repaints the
+// whole screen once more than LV_INV_BUF_SIZE (32) areas pile up between two refreshes.
+#define INV_MERGE_PAD_PX  24
+#define INV_MAX_AREAS     12
 
 static int        s_theme    = THEME_PHOSPHOR;
 static void      (*s_themeCb)(int) = nullptr;
@@ -148,6 +152,20 @@ struct FlowSeg { lv_point_t a, b; uint16_t gen; };   // gen = the poll it was la
 static std::deque<FlowSeg> s_flow;
 static uint16_t s_flowGen = 0;        // ++ each update(); flow segments fade out after s_flowGenMax polls
 
+// Per-aircraft trail history in fixed slots keyed by hex (n <= ADSB_MAX_AIRCRAFT: no map
+// nodes or std::string keys to build and free on every poll, and the per-poll AcDraw list
+// can point at a slot instead of copying the vector). Slots never move.
+struct TrailSlot { char hex[8]; bool used; std::vector<lv_point_t> pts; };
+static TrailSlot s_trailStore[ADSB_MAX_AIRCRAFT];
+static TrailSlot *trail_slot(const char *hex) {
+    TrailSlot *free = nullptr;
+    for (TrailSlot &t : s_trailStore) {
+        if (t.used) { if (strcmp(t.hex, hex) == 0) return &t; }
+        else if (!free) free = &t;
+    }
+    return free;   // null only with more in-range contacts than the feed cap allows
+}
+
 struct AcDraw {
     lv_point_t pos;            // current (animated) screen position — what gets drawn
     lv_point_t from, to;       // smooth-motion glide endpoints (M4 interpolation)
@@ -164,21 +182,12 @@ struct AcDraw {
     float      vsFpm, gsKt, distKm, bearingDeg;
     int        squawk;
     const std::vector<lv_point_t> *trail;    // points into s_trailStore (null: no history)
+    int8_t     lslot = LL_NONE;  // label place (label_layout.h), kept across polls by hex
+    LlRect     lbox  = { 0, 0, -1, -1 };
 };
 static std::vector<AcDraw> s_acs;
-// Per-aircraft trail history in fixed slots keyed by hex (n <= ADSB_MAX_AIRCRAFT: no map
-// nodes or std::string keys to build and free on every poll; the per-poll AcDraw list points
-// at a slot instead of copying the vector). Slots never move.
-struct TrailSlot { char hex[8]; bool used; std::vector<lv_point_t> pts; };
-static TrailSlot s_trailStore[ADSB_MAX_AIRCRAFT];
-static TrailSlot *trail_slot(const char *hex) {
-    TrailSlot *free = nullptr;
-    for (TrailSlot &t : s_trailStore) {
-        if (t.used) { if (strcmp(t.hex, hex) == 0) return &t; }
-        else if (!free) free = &t;
-    }
-    return free;   // null only with more in-range contacts than the feed cap allows
-}
+static LlRect s_lobs[8];           // areas labels stay clear of (setLabelObstacles)
+static int    s_nlobs = 0;
 
 static const float GX[4] = { 0.0f,  7.0f, 0.0f, -7.0f };
 static const float GY[4] = { -11.0f, 5.0f, 8.0f, 5.0f };
@@ -219,12 +228,9 @@ static void show(lv_obj_t *o, bool v) {
 }
 
 static lv_color_t alt_color(float altFt, bool onGround) {
-    if (onGround)      return lv_color_hex(0x888888);
-    if (altFt < 3000)  return lv_color_hex(0xFF5A3C);
-    if (altFt < 10000) return lv_color_hex(0xFFB23C);
-    if (altFt < 20000) return lv_color_hex(0xC8FF3C);
-    if (altFt < 30000) return lv_color_hex(0x39FF14);
-    return lv_color_hex(0x3CE0FF);
+    if (onGround) return lv_color_hex(UI_ALT_GROUND);
+    const int band = altFt < 3000 ? 0 : altFt < 10000 ? 1 : altFt < 20000 ? 2 : altFt < 30000 ? 3 : 4;
+    return lv_color_hex(UI_ALT_BANDS[band]);
 }
 // Per-aircraft altitude label under the glyph. Same ft/m rule as ui.cpp fmt_alt().
 static void fmt_alt_txt(char *dst, size_t n, float altFt, bool onGround) {
@@ -252,15 +258,15 @@ static inline lv_point_t rot_pt(float px, float py, float deg, lv_coord_t ox, lv
 }
 
 // ======================= scope background cache ==============================
-// Everything under the aircraft that does not move between polls -- the background (black;
-// Orb's gradient), the persistent flow tracks and the chrome the grid layer used to draw
-// (coastline, airports, rings, crosshair; Orb: grid, coastline, airports, centre triangle)
-// -- lives in ONE full-screen RGB565 buffer shown by s_bgImg at the bottom of the tile.
-// TRUE_COLOR at img_opa COVER passes LVGL's cover check, so any repaint of a scope area
-// starts at the image: the layers under it are skipped and the cache pixels are a straight
-// copy. cache_render_rect() renders any rectangle with LVGL's own software renderer aimed at
-// the buffer (the trick behind lv_canvas_draw_*), so re-rendering a rect (added or pruned
-// flow, dim change) is exact and repeatable.
+// Everything under the aircraft that does not move between polls — the background
+// (black; Orb's gradient), the persistent flow tracks and the chrome the grid layer
+// used to draw (coastline, airports, rings, crosshair, E/W ticks; Orb: grid, coastline,
+// airports, centre triangle) — lives in ONE full-screen RGB565 buffer shown by s_bgImg
+// at the bottom of the tile. TRUE_COLOR at img_opa COVER passes LVGL's cover check, so
+// any repaint of a scope area starts at the image: the layers under it are skipped and
+// the cache pixels are a straight copy. cache_render_rect() renders any rectangle with
+// LVGL's own software renderer aimed at the buffer (the trick behind lv_canvas_draw_*),
+// so re-rendering a rect (added/pruned flow, dim change) is exact and repeatable.
 static void cache_bg_fill(lv_draw_ctx_t *d, const lv_area_t *clip) {
     lv_draw_rect_dsc_t bg;
     lv_draw_rect_dsc_init(&bg);
@@ -285,7 +291,7 @@ static void cache_flow_draw(lv_draw_ctx_t *d, const lv_area_t *clip) {
     fl.opa = dim(FLOW_OPA);
     uint32_t n = 0;
     for (const FlowSeg &s : s_flow) {
-        if ((++n & 31) == 0) comp_tick();    // keep the sweep moving through long passes
+        if ((++n & 31) == 0) comp_tick();          // keep the sweep moving through long passes
         if (LV_MAX(s.a.x, s.b.x) + 2 < clip->x1 || LV_MIN(s.a.x, s.b.x) - 2 > clip->x2 ||
             LV_MAX(s.a.y, s.b.y) + 2 < clip->y1 || LV_MIN(s.a.y, s.b.y) - 2 > clip->y2) continue;
         lv_point_t pts[2] = { s.a, s.b };
@@ -293,7 +299,7 @@ static void cache_flow_draw(lv_draw_ctx_t *d, const lv_area_t *clip) {
     }
 }
 
-// The chrome the former grid layer drew, in the same z-order: coastline, airports, rings and crosshair.
+// The chrome the grid layer used to draw, same z-order as grid_draw_cb had.
 static void cache_chrome_draw(lv_draw_ctx_t *d, const lv_area_t *clip) {
     const lv_point_t c = { s_cx, s_cy };
 
@@ -323,7 +329,7 @@ static void cache_chrome_draw(lv_draw_ctx_t *d, const lv_area_t *clip) {
         td.border_color = lv_color_hex(0x8A4A00);
         td.border_width = 1;
         td.border_opa = dim(160);
-        coastline_draw(d, COAST_COLOR, dim(170), 2, clip);   // landmass outline under the triangle
+        coastline_draw(d, COAST_COLOR, dim(170), 2, clip);  // landmass outline under the triangle
         if (s_airportsEnabled) airports_draw(d, AIRPORT_COLOR, dim(150));
         lv_draw_polygon(d, &td, tri, 3);
         return;
@@ -352,6 +358,21 @@ static void cache_chrome_draw(lv_draw_ctx_t *d, const lv_area_t *clip) {
     lv_point_t v1 = { s_cx, (lv_coord_t)(s_cy - 211) }, v2 = { s_cx, (lv_coord_t)(s_cy + 211) };
     lv_draw_line(d, &ll, &h1, &h2);
     lv_draw_line(d, &ll, &v1, &v2);
+
+    // E and W as short ticks on the outer ring (only N keeps a letter; the page dots sit at S).
+    // Gone once the clock dial shows: its own marks take over.
+    if (s_clockStage < 2) {
+        lv_draw_line_dsc_t tk;
+        lv_draw_line_dsc_init(&tk);
+        tk.color = s_cSoft;
+        tk.width = 2;
+        tk.opa = dim(LV_OPA_COVER);
+        const lv_coord_t r0 = (lv_coord_t)(RADAR_R_OUTER_PX * 0.94f), r1 = (lv_coord_t)(RADAR_R_OUTER_PX * 0.995f);
+        lv_point_t e1 = { (lv_coord_t)(s_cx + r0), s_cy }, e2 = { (lv_coord_t)(s_cx + r1), s_cy };
+        lv_point_t w1 = { (lv_coord_t)(s_cx - r1), s_cy }, w2 = { (lv_coord_t)(s_cx - r0), s_cy };
+        lv_draw_line(d, &tk, &e1, &e2);
+        lv_draw_line(d, &tk, &w1, &w2);
+    }
 }
 
 // Render one rect of the cache (screen coordinates, clipped to the screen).
@@ -365,8 +386,9 @@ static void cache_render_rect(const lv_area_t *rect) {
     if (clip.x2 < clip.x1 || clip.y2 < clip.y1) return;
 
     // A stand-in display aimed at the cache buffer, the way lv_canvas_draw_* does it
-    // (init_fake_disp): with no set_px_cb the software renderer takes the fast path and
-    // blends straight into s_cacheBuf. Static storage: this runs on the LVGL thread only.
+    // (init_fake_disp): with no set_px_cb the software renderer takes the fast path
+    // and blends straight into s_cacheBuf. Static storage: this runs on the LVGL
+    // thread only, and the LVGL pool never grows for a render.
     static lv_disp_t fake;
     static lv_disp_drv_t drv;
     static lv_area_t buf_area = { 0, 0, SCREEN_W - 1, SCREEN_H - 1 };
@@ -394,9 +416,9 @@ static void cache_render_rect(const lv_area_t *rect) {
     lv_draw_sw_deinit_ctx(&drv, &sw_ctx.base_draw);
 }
 
-// Whole-cache re-render: init, theme / airports / trail-length / clock-stage change, and a
-// scope geometry change in update() -- the events that used to repaint the grid layer or
-// rebuild the flow canvas.
+// Whole-cache re-render: init, theme / airports / trail-length / clock-stage change,
+// and a scope geometry change in update() — the events that used to invalidate the
+// grid layer or rebuild the whole flow canvas.
 static void cache_full_rerender(void) {
     if (!s_cacheBuf || !s_bgImg) return;
     const lv_area_t all = { 0, 0, SCREEN_W - 1, SCREEN_H - 1 };
@@ -457,12 +479,11 @@ static void wedge_bbox(float deg, lv_area_t *out) {
     out->x2 = maxx + pad; out->y2 = maxy + pad;
 }
 
-// glyph + label bounding box (for partial invalidation during the glide).
-// Must cover the label areas drawn in the aircraft layer (they grew for large-text mode).
+// Glyph bounding box (for partial invalidation during the glide): the glyph and its rings.
+// Labels are invalidated on their own (place_labels), wherever they sit.
 static inline lv_area_t glyph_bbox(lv_point_t p) {
-    lv_area_t a;
-    if (orb()) { a.x1 = p.x - 30; a.y1 = p.y - 30; a.x2 = p.x + 30;  a.y2 = p.y + 30; }
-    else          { a.x1 = p.x - 22; a.y1 = p.y - 22; a.x2 = p.x + 174; a.y2 = p.y + 32; }
+    const lv_coord_t r = orb() ? 30 : 22;
+    lv_area_t a = { (lv_coord_t)(p.x - r), (lv_coord_t)(p.y - r), (lv_coord_t)(p.x + r), (lv_coord_t)(p.y + r) };
     return a;
 }
 static inline void area_union(lv_area_t &d, const lv_area_t &s) {
@@ -470,10 +491,60 @@ static inline void area_union(lv_area_t &d, const lv_area_t &s) {
     d.x2 = LV_MAX(d.x2, s.x2); d.y2 = LV_MAX(d.y2, s.y2);
 }
 
+// =============================== labels =====================================
+// Where each drawn plane's label goes (label_layout.h). Emergencies first, then the selected
+// plane, then the rest nearest-first (s_acs is sorted by distance), so the planes that matter
+// keep the best places. The callers repaint: update()/select() the whole layer, the glide
+// step each plane's old and new glyph + label area.
+static void place_labels() {
+    static LlItem items[ADSB_MAX_AIRCRAFT + 1];
+    static int    which[ADSB_MAX_AIRCRAFT + 1];   // s_acs index of each item
+    static int8_t slot[ADSB_MAX_AIRCRAFT + 1];
+    static LlRect box[ADSB_MAX_AIRCRAFT + 1];
+    int n = 0;
+    if (!orb() && s_labelsOn) {
+        for (int pass = 0; pass < 3; ++pass)
+            for_each_drawn([&](size_t i, const AcDraw &ac) {
+                const bool sel = !s_selHex.empty() && s_selHex == ac.hex;
+                if ((ac.emergency ? 0 : (sel ? 1 : 2)) != pass || n > ADSB_MAX_AIRCRAFT) return;
+                const int lc = (int)strlen(ac.call), la = s_bigText ? 0 : (int)strlen(ac.altTxt);
+                if (lc == 0 && la == 0) return;
+                LlItem &it = items[n];
+                it.x = (int16_t)ac.pos.x;
+                it.y = (int16_t)ac.pos.y;
+                if (s_bigText) {                       // large text: the callsign alone, in M
+                    it.w = (int16_t)(lc * UI_M_ADV);
+                    it.h = (int16_t)UI_M_LINE;
+                } else {
+                    it.w = (int16_t)(LV_MAX(lc, la) * UI_S_ADV);
+                    it.h = (int16_t)((lc && la) ? 2 * UI_S_LINE + LABEL_LINE_GAP : UI_S_LINE);
+                }
+                it.g = (int16_t)((ac.emergency || sel) ? LABEL_RING_R : LABEL_GLYPH_R);
+                it.prev = ac.lslot;
+                which[n++] = (int)i;
+            });
+        ll_place(items, n, s_lobs, s_nlobs, s_cx, s_cy, LABEL_CIRCLE_R, slot, box);
+    }
+    int k = 0;   // which[] is not in s_acs order: look each plane up
+    for (size_t i = 0; i < s_acs.size(); ++i) {
+        int8_t ns = LL_NONE;
+        LlRect nb = { 0, 0, -1, -1 };
+        for (k = 0; k < n; ++k)
+            if (which[k] == (int)i) { ns = slot[k]; nb = box[k]; break; }
+        s_acs[i].lslot = ns;
+        s_acs[i].lbox = nb;
+    }
+}
+static inline void area_union_box(lv_area_t &d, const LlRect &b) {
+    if (b.x2 < b.x1) return;                         // no label
+    const lv_area_t a = { b.x1, b.y1, b.x2, b.y2 };
+    area_union(d, a);
+}
+
 // ---- partial invalidation (update()) ----
-// Areas nearer than INV_MERGE_PAD_PX merge into one; past INV_MAX_AREAS the union is taken.
-// Keeps the pending-area count far under LVGL's LV_INV_BUF_SIZE (32), above which LVGL
-// repaints the whole screen anyway.
+// Merge areas nearer than INV_MERGE_PAD_PX into one; past INV_MAX_AREAS take their
+// union. Keeps the pending-area count far under LVGL's LV_INV_BUF_SIZE (32), above
+// which LVGL repaints the whole screen anyway.
 static int inv_merge(lv_area_t *a, int n) {
     if (n <= 1) return n;
     for (;;) {
@@ -498,8 +569,8 @@ static int inv_merge(lv_area_t *a, int n) {
 }
 
 // Everything one drawn aircraft paints: the glyph with its selection/emergency rings
-// (glyph_bbox; Orb's waves add the 44 px box) and the trail polyline (2 px line). The
-// labels sit inside glyph_bbox (x +12..+168, y -14..+26), so they need no box of their own.
+// (glyph_bbox; Orb's waves add the 44 px box), the trail polyline (2 px line) and the
+// label box. update() invalidates the union of this before and after each poll.
 static void drawn_bounds(const AcDraw &ac, lv_area_t &a) {
     a = glyph_bbox(ac.pos);
     if (orb() && ac.inRange) {
@@ -519,6 +590,7 @@ static void drawn_bounds(const AcDraw &ac, lv_area_t &a) {
         t.x1 -= 2; t.y1 -= 2; t.x2 += 2; t.y2 += 2;
         area_union(a, t);
     }
+    area_union_box(a, ac.lbox);
 }
 
 // Per-hex drawn bounds of whatever for_each_drawn yields right now.
@@ -550,14 +622,34 @@ static void interp_step(void) {
     float t = s_pollMs ? (float)(now - s_animStartMs) / (float)s_pollMs : 1.0f;
     if (t > 1.0f) t = 1.0f;
     const float e = t * (2.0f - t);                  // ease-out quad
-    for (AcDraw &ac : s_acs) {
+    static lv_point_t oldPos[ADSB_MAX_AIRCRAFT];
+    static LlRect     oldBox[ADSB_MAX_AIRCRAFT];
+    const size_t n = LV_MIN(s_acs.size(), (size_t)ADSB_MAX_AIRCRAFT);
+    bool moved = false;
+    for (size_t i = 0; i < n; ++i) {
+        AcDraw &ac = s_acs[i];
+        oldPos[i] = ac.pos;
+        oldBox[i] = ac.lbox;
         const lv_coord_t nx = ac.from.x + (lv_coord_t)lroundf((float)(ac.to.x - ac.from.x) * e);
         const lv_coord_t ny = ac.from.y + (lv_coord_t)lroundf((float)(ac.to.y - ac.from.y) * e);
         if (nx == ac.pos.x && ny == ac.pos.y) continue;
-        lv_point_t np; np.x = nx; np.y = ny;
-        lv_area_t inv = glyph_bbox(ac.pos);
-        area_union(inv, glyph_bbox(np));
-        ac.pos = np;
+        ac.pos.x = nx;
+        ac.pos.y = ny;
+        moved = true;
+    }
+    if (!moved) return;
+    place_labels();                                  // labels follow, and re-place if crowded
+    // One invalid area per plane (glyph and label, before and after): LVGL keeps 32 and
+    // repaints the whole screen once they run out.
+    for (size_t i = 0; i < n; ++i) {
+        const AcDraw &ac = s_acs[i];
+        const LlRect &ob = oldBox[i], &nb = ac.lbox;
+        const bool boxChanged = ob.x1 != nb.x1 || ob.y1 != nb.y1 || ob.x2 != nb.x2 || ob.y2 != nb.y2;
+        if (ac.pos.x == oldPos[i].x && ac.pos.y == oldPos[i].y && !boxChanged) continue;
+        lv_area_t inv = glyph_bbox(oldPos[i]);
+        area_union(inv, glyph_bbox(ac.pos));
+        area_union_box(inv, ob);
+        area_union_box(inv, nb);
         lv_obj_invalidate_area(s_acLayer, &inv);
     }
 #endif
@@ -574,10 +666,11 @@ static void apply_clock_stage(int stage) {
     s_clockStage = stage;
     s_dimOpa   = stage == 0 ? LV_OPA_COVER : (stage == 1 ? CLOCK_RADAR_OPA_STEP1 : CLOCK_RADAR_OPA);
     s_labelsOn = stage == 0;
+    place_labels();                                   // back from the clock: labels at today's places
     s_dialOpa  = stage >= 3 ? LV_OPA_COVER : (stage == 2 ? LV_OPA_50 : LV_OPA_TRANSP);
     const lv_opa_t letters = stage == 0 ? LV_OPA_COVER : (stage == 1 ? LV_OPA_50 : LV_OPA_TRANSP);
     for (lv_obj_t *r : s_rose) if (r) lv_obj_set_style_text_opa(r, letters, 0);
-    cache_full_rerender();                     // the dim applies to everything in the cache
+    cache_full_rerender();                           // the dim applies to everything in the cache
     if (s_parent && orb()) lv_obj_set_style_bg_opa(s_parent, s_dimOpa, 0);
     show(s_rangeLbl, stage == 0 && s_rangeLblVisible && !orb());
     show(s_clockLayer, stage != 0);
@@ -768,22 +861,27 @@ static void ac_draw_cb(lv_event_t *e) {
             }
         }
 
-        // floating labels (phosphor only; orb keeps clean balls + the tap card; the clock
-        // hides them so the hands read cleanly)
-        if (!drg && s_labelsOn) {
+        // Floating labels where place_labels() put them (phosphor themes only; Orb keeps clean
+        // balls + the tap card; the clock hides them so the hands read cleanly). A label on
+        // the glyph's left is right-aligned, so both lines sit flush against the plane.
+        if (!drg && s_labelsOn && ac.lslot != LL_NONE) {
+            const bool left = ac.lslot == LL_L || ac.lslot == LL_BL || ac.lslot == LL_AL;
             lv_draw_label_dsc_t lc;
             lv_draw_label_dsc_init(&lc);
-            lc.font = s_bigText ? &lv_font_montserrat_18 : &lv_font_montserrat_14;
-            lc.color = s_cInk;
-            lv_area_t a1 = { (lv_coord_t)(ac.pos.x + 12), (lv_coord_t)(ac.pos.y - 14),
-                             (lv_coord_t)(ac.pos.x + 168), (lv_coord_t)(ac.pos.y + 4) };
-            if (ac.call[0]) lv_draw_label(d, &lc, &a1, ac.call, NULL);
-            lv_draw_label_dsc_t la;
-            lv_draw_label_dsc_init(&la);
-            la.font = s_bigText ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
-            la.color = ac.color;
-            lv_area_t a2 = { a1.x1, (lv_coord_t)(ac.pos.y + 4), a1.x2, (lv_coord_t)(ac.pos.y + 26) };
-            if (ac.altTxt[0]) lv_draw_label(d, &la, &a2, ac.altTxt, NULL);
+            lc.font = s_bigText ? UI_FONT_M : UI_FONT_S;
+            lc.color = ac.emergency ? COL_EMERG : s_cInk;
+            lc.align = left ? LV_TEXT_ALIGN_RIGHT : LV_TEXT_ALIGN_LEFT;
+            lv_coord_t y = ac.lbox.y1;
+            if (ac.call[0]) {
+                lv_area_t a = { ac.lbox.x1, y, ac.lbox.x2, (lv_coord_t)(y + lv_font_get_line_height(lc.font) - 1) };
+                lv_draw_label(d, &lc, &a, ac.call, NULL);
+                y = (lv_coord_t)(y + UI_S_LINE + LABEL_LINE_GAP);
+            }
+            if (!s_bigText && ac.altTxt[0]) {
+                lc.color = ac.emergency ? COL_EMERG : ac.color;
+                lv_area_t a = { ac.lbox.x1, y, ac.lbox.x2, (lv_coord_t)(y + UI_S_LINE - 1) };
+                lv_draw_label(d, &lc, &a, ac.altTxt, NULL);
+            }
         }
     });
 }
@@ -840,7 +938,7 @@ static void clock_draw_cb(lv_event_t *e) {
         }
         lv_draw_label_dsc_t n;
         lv_draw_label_dsc_init(&n);
-        n.font = &lv_font_montserrat_28;
+        n.font = UI_FONT_L;
         n.color = s_cInk;
         n.opa = scaled(CLOCK_NUM_OPA);
         n.align = LV_TEXT_ALIGN_CENTER;
@@ -924,16 +1022,11 @@ void setTheme(int t) {
     s_theme = ((t % THEME_COUNT) + THEME_COUNT) % THEME_COUNT;
     const bool drg = orb();
 
-    switch (s_theme) {                          // pick the scope chrome palette
-        case THEME_AMBER:
-            s_cRing = lv_color_hex(0xFFB23C); s_cLead = lv_color_hex(0xFFD27A);
-            s_cInk  = lv_color_hex(0xFFE9C2); s_cSoft = lv_color_hex(0xFFC98A); break;
-        case THEME_MILITARY:
-            s_cRing = lv_color_hex(0x49C46B); s_cLead = lv_color_hex(0x76E08C);
-            s_cInk  = lv_color_hex(0xE0FFE6); s_cSoft = lv_color_hex(0x9FD7A8); break;
-        default:                                // phosphor (orb uses its own colors)
-            s_cRing = COL_GREEN; s_cLead = COL_LEAD; s_cInk = COL_INK; s_cSoft = COL_SOFT; break;
-    }
+    const UiPalette &pal = ui_palette(s_theme);    // the scope chrome (Orb draws its own scene)
+    s_cRing = lv_color_hex(pal.ring);
+    s_cLead = lv_color_hex(pal.lead);
+    s_cInk  = lv_color_hex(pal.ink);
+    s_cSoft = lv_color_hex(pal.soft);
 
     if (s_parent) {
         if (drg) {
@@ -951,15 +1044,16 @@ void setTheme(int t) {
     show(s_centerDot, !drg);                             // orb draws an orange triangle instead
 
     // retint the persistent chrome objects for the active palette
-    if (s_rose[0]) lv_obj_set_style_text_color(s_rose[0], s_cInk, 0);
-    for (int i = 1; i < 4; ++i) if (s_rose[i]) lv_obj_set_style_text_color(s_rose[i], s_cSoft, 0);
+    if (s_rose[0]) lv_obj_set_style_text_color(s_rose[0], lv_color_hex(pal.accentHi), 0);
     if (s_centerDot) lv_obj_set_style_bg_color(s_centerDot, s_cInk, 0);
     if (s_pulse)     lv_obj_set_style_border_color(s_pulse, s_cInk, 0);
     if (s_rangeLbl)  lv_obj_set_style_text_color(s_rangeLbl, s_cRing, 0);
 
     cache_full_rerender();                             // flow colour + chrome follow the theme
     sweep_sync();
+    place_labels();                                      // Orb has no labels
     if (s_parent) lv_obj_invalidate(s_parent);
+    ui_style_set_theme(s_theme);                         // the chrome on every screen follows
     if (s_themeCb) s_themeCb(s_theme);
 }
 
@@ -1016,7 +1110,7 @@ void setTrailLength(int level) {
         s_flow.clear();
         for (TrailSlot &t : s_trailStore) { t.used = false; t.hex[0] = 0; t.pts.clear(); }
     } else while ((int)s_flow.size() > s_flowMax) s_flow.pop_front();
-    cache_full_rerender();                          // repaint the flow layer at the new length
+    cache_full_rerender();                           // repaint the flow layer at the new length
     if (s_acLayer) lv_obj_invalidate(s_acLayer);
 }
 
@@ -1037,6 +1131,7 @@ void setUnits(int preset) {
     if (u == s_units) return;
     s_units = u;
     for (AcDraw &a : s_acs) fmt_alt_txt(a.altTxt, sizeof(a.altTxt), a.altFt, a.onGround);
+    place_labels();                        // the altitude text changed width
     if (s_acLayer) lv_obj_invalidate(s_acLayer);
 }
 
@@ -1077,14 +1172,12 @@ void init(void *lv_parent) {
     s_sweep     = make_layer(parent, sweep_draw_cb);
     s_acLayer   = make_layer(parent, ac_draw_cb);
 
-    s_rose[0] = make_label(parent, "N", &lv_font_montserrat_28, COL_INK,  LV_ALIGN_TOP_MID,    0, 12);
-    s_rose[1] = make_label(parent, "S", &lv_font_montserrat_16, COL_SOFT, LV_ALIGN_BOTTOM_MID, 0, -12);
-    s_rose[2] = make_label(parent, "E", &lv_font_montserrat_16, COL_SOFT, LV_ALIGN_RIGHT_MID, -12, 0);
-    s_rose[3] = make_label(parent, "W", &lv_font_montserrat_16, COL_SOFT, LV_ALIGN_LEFT_MID,   12, 0);
+    // Only N stays a letter (E and W are ticks in the cache chrome; the page dots sit at S).
+    s_rose[0] = make_label(parent, "N", UI_FONT_M, COL_INK, LV_ALIGN_TOP_MID, 0, 14);
 
     char rng[16];
     snprintf(rng, sizeof(rng), "%.0f km", (double)RANGE_KM_DEFAULT);
-    s_rangeLbl = make_label(parent, rng, &lv_font_montserrat_14, COL_GREEN, LV_ALIGN_CENTER, 92, -8);
+    s_rangeLbl = make_label(parent, rng, UI_FONT_S, COL_GREEN, LV_ALIGN_CENTER, 92, -8);
     lv_obj_set_style_text_opa(s_rangeLbl, 128, 0);
 
     s_pulse = lv_obj_create(parent);
@@ -1264,7 +1357,8 @@ void update(const std::vector<Aircraft> &aircraft, const RadarSettings &s) {
     std::sort(out.begin(), out.end(),
               [](const AcDraw &a, const AcDraw &b) { return a.distKm < b.distKm; });
 
-    if (s_rangeLbl) {                                 // keep the range label in sync with settings
+    if (s_rangeLbl && s_rangeLblVisible &&
+        !lv_obj_has_flag(s_rangeLbl, LV_OBJ_FLAG_HIDDEN)) {   // keep in sync with settings
         char r[16];
         snprintf(r, sizeof(r), "%.0f km", (double)s.rangeKm);
         if (strcmp(lv_label_get_text(s_rangeLbl), r) != 0) lv_label_set_text(s_rangeLbl, r);
@@ -1277,10 +1371,14 @@ void update(const std::vector<Aircraft> &aircraft, const RadarSettings &s) {
     s_lastUpdateMs = now;
     s_animStartMs  = now;
 
+    for (AcDraw &d : out)                            // keep each plane's label where it was
+        for (const AcDraw &o : s_acs)
+            if (strcmp(o.hex, d.hex) == 0) { d.lslot = o.lslot; break; }
     s_acs.swap(out);                                 // out keeps the old buffer for the next poll
+    place_labels();
 
     // Invalidate only what a poll changed on the aircraft layer: per hex, the union of
-    // the drawn bounds before and after (glyph + rings/waves, trail).
+    // the drawn bounds before and after (glyph + rings/waves, trail, label box).
     if (s_acLayer && !fullLayer) {
         static HexArea after[ADSB_MAX_AIRCRAFT];
         const int nAfter = collect_drawn_bounds(after, ADSB_MAX_AIRCRAFT);
@@ -1337,6 +1435,7 @@ static void fill_info(const AcDraw &a, AcInfo &out) {
 void select(int idx) {
     if (idx < 0 || idx >= (int)s_acs.size()) s_selHex.clear();
     else s_selHex = s_acs[idx].hex;
+    place_labels();                                  // the selected plane wins label places
     if (s_acLayer) lv_obj_invalidate(s_acLayer);
 }
 
@@ -1344,6 +1443,7 @@ bool selectHex(const char *hex) {
     for (const AcDraw &a : s_acs)
         if (strcmp(a.hex, hex) == 0) {
             s_selHex = a.hex;
+            place_labels();
             if (s_acLayer) lv_obj_invalidate(s_acLayer);
             return true;
         }
@@ -1355,6 +1455,25 @@ bool selected(AcInfo &out) {
     for (const AcDraw &a : s_acs)
         if (s_selHex == a.hex) { fill_info(a, out); return true; }
     return false;
+}
+
+bool selectedScreenPos(int16_t *x, int16_t *y) {
+    if (s_selHex.empty()) return false;
+    bool found = false;
+    for_each_drawn([&](size_t, const AcDraw &ac) {
+        if (found || s_selHex != ac.hex) return;
+        if (x) *x = (int16_t)ac.pos.x;
+        if (y) *y = (int16_t)ac.pos.y;
+        found = true;
+    });
+    return found;
+}
+
+void setLabelObstacles(const LlRect *r, int n) {
+    s_nlobs = (n < 0) ? 0 : (n > 8 ? 8 : n);
+    for (int i = 0; i < s_nlobs; ++i) s_lobs[i] = r[i];
+    place_labels();
+    if (s_acLayer) lv_obj_invalidate(s_acLayer);
 }
 
 int count() { return (int)s_acs.size(); }

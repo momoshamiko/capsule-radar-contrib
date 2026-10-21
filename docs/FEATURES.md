@@ -4,16 +4,28 @@ Visual target: `assets/plane_radar_2.0_mockup.html`.
 
 ## Look (the "prettier")
 - True-black AMOLED background; phosphor-green scope, glow on the sweep edge.
-- Concentric range rings + crosshair + N/E/S/W rose; outer-ring range label (e.g. "15 km").
+- **Pixel look**: one pixel font (Departure Mono, 1-bit at 11/22/33 px), square 2-px frames,
+  dotted dividers and one token palette per theme (`src/ui_tokens.h`). Every screen follows
+  the theme: scope, card, list, stats, weather, status pull-down, idle clock, splash and page dots. A still
+  1.5 s hold on the radar shows "LIFT TO CHANGE THEME"; the lift switches the theme and shows
+  a "THEME · NAME" note.
+- Concentric range rings + crosshair; an N marker and E/W ticks (no S: the page dots sit
+  there). The zoom chip shows the range.
 - Rotating sweep with a trailing alpha gradient.
 - Aircraft as **plane glyphs rotated by track/heading** (not dots).
-- **Altitude color map**: ≤3k ft red → 3–10k amber → 10–20k lime → 20–30k green → 30k+ cyan.
+- **Altitude color map**: <3k ft pink → 3–10k amber → 10–20k lime → 20–30k green → 30k+ cyan.
+  Red means an emergency only.
+- **Plane labels** keep clear of each other, other glyphs, the status note, the N, the zoom
+  chip, the page dots and the open card; a label with no free place is left out (the glyph
+  still draws).
 - **Fading trail** behind each aircraft (last N positions / direction tail).
 - Center "you" dot with a soft pulse.
-- Top HUD: WiFi strength, aircraft count, clock.
+- No top row: a drag down from the top opens the **status pull-down** (time, date, WiFi, GPS,
+  aircraft count, battery, data source, THEME button). A small note under the N shows
+  NO WIFI, DATA OLD or LOW BATTERY only when one applies.
 
 ## Functions (the "more")
-1. **Touch to inspect** — tap nearest glyph → detail card: callsign, type, altitude, ground speed, vertical speed, distance, heading (the aircraft's ground track), squawk, and origin → destination. Registration on the card is *not built yet*.
+1. **Touch to inspect** — tap nearest glyph → detail card: callsign, type, altitude, ground speed, vertical speed, distance, heading (the aircraft's ground track), squawk, and origin → destination. The X just outside the card's right end (above the card, or below it when the card sits at the top), or a tap on empty radar, closes it. Registration on the card is *not built yet*.
 2. **Views** (swipe): Radar · List (sorted by distance) · Stats (count, closest, max altitude and range) · Weather. Tap an aircraft to open its detail card.
 3. **Range zoom** — the on-screen zoom button cycles 10 / 20 / 30 / 50 / 100 km and re-queries the aircraft feed accordingly. The web page offers 10 / 15 / 25 / 30 / 50 / 100 / 150 km.
 4. **Orientation** — north-up ↔ track-up toggle. *Not built yet: the scope is north-up only.*

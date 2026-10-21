@@ -1,6 +1,7 @@
 #include "airports.h"
 #include "airports_data.h"
 #include "geo.h"
+#include "ui_style.h"
 #include <vector>
 #include <math.h>
 #include <string.h>
@@ -51,14 +52,14 @@ void airports_draw(lv_draw_ctx_t *ctx, lv_color_t color, lv_opa_t opa) {
 
     lv_draw_label_dsc_t lbl;
     lv_draw_label_dsc_init(&lbl);
-    lbl.color = color; lbl.opa = opa; lbl.font = &lv_font_montserrat_12;
+    lbl.color = color; lbl.opa = opa; lbl.font = UI_FONT_S;
 
     for (const Apt &ap : s_apts) {
         if (ap.large) {
             lv_draw_arc(ctx, &ring, &ap.pos, 3, 0, 360);                    // small hollow ring
             if (ap.iata[0]) {
-                lv_area_t la = { (lv_coord_t)(ap.pos.x + 5), (lv_coord_t)(ap.pos.y - 7),
-                                 (lv_coord_t)(ap.pos.x + 44), (lv_coord_t)(ap.pos.y + 7) };
+                lv_area_t la = { (lv_coord_t)(ap.pos.x + 5), (lv_coord_t)(ap.pos.y - 5),
+                                 (lv_coord_t)(ap.pos.x + 44), (lv_coord_t)(ap.pos.y + 5) };
                 lv_draw_label(ctx, &lbl, &la, ap.iata, NULL);
             }
         } else {

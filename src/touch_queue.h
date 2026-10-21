@@ -3,7 +3,7 @@
 //
 // LVGL reads the pointer from a timer inside lv_timer_handler(), and no timer runs while a
 // frame renders. A swipe redraws the whole screen on every frame, and on the device a full
-// frame takes ~150-200 ms, so LVGL saw the finger about five times a second. A quick swipe
+// frame took ~150-200 ms then, so LVGL saw the finger about five times a second. A quick swipe
 // reached it as a press and a release at one spot: a tap on whatever was under the finger
 // (a plane, a list row, the weather panel). A slower one arrived as a few big jumps, and the
 // tileview often snapped back. display.cpp now also samples the panel between the flush

@@ -4,16 +4,17 @@
 // always-on DC1 rail, so it lights up without configuring the PMIC first.
 // NOTE: co5300::begin() must stay ahead of touch_begin() — on the 1.43 the touch
 // controller's reset is tied to the panel reset and it is absent from I2C until then.
-// The actual UI is built by ui_boot_create() (shared with the native SDL sim).
+// The actual UI is built by ui_create() in ui.cpp (shared with the native SDL sim).
+#include "display.h"
 #include "config.h"
 #if !defined(BOARD_LCD21)      // CO5300 AMOLED driver (1.75 + 1.43); the LCD-2.1 build uses display_st7701.cpp
 #include "display.h"
 #include "radar_view.h"
 #include "ui.h"
-#include "perf.h"
 #include "touch.h"
 #include "touch_queue.h"
 #include "co5300.h"
+#include "perf.h"
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -59,8 +60,12 @@ static lv_color_t *s_frameBuf = nullptr;     // full logical framebuffer for arb
 #define TRAIL_U        ((int)(SWEEP_TRAIL_DEG / 360.0f * ANG_UNITS))
 #define FADE_SHIFT     3
 #define FADE_N         ((TRAIL_U >> FADE_SHIFT) + 2)
-#define COMP_BAND      32                        // rows per compositor window (even: the panel needs even heights)
-#define SWEEP_MASKS    4                         // boxes the sweep must not paint over (ui_sweep_masks() in ui.cpp)
+#define COMP_BAND      32                        // rows per compositor window (even: the panel needs even heights);
+                                                 //   each window costs ~0.1 ms of commands, ~2.5k px of copying
+// Boxes the sweep must not paint over (ui_sweep_masks() in ui.cpp): card, its X, photo, credit,
+// zoom chip, page dots, toast, status note, pull-down. At most 7 show at once: the zoom chip
+// hides while the card shows, and the X while the pull-down is open.
+#define SWEEP_MASKS    8
 static_assert(LV_COLOR_16_SWAP == 0, "compositor assumes native-order RGB565");
 
 struct Rect { int x1, y1, x2, y2; bool valid; };
@@ -574,8 +579,8 @@ static void row_from_lvgl(uint16_t *dst, int y, void *ctx) {
 // At 90° and 270° an LVGL block (w x h) lands transposed, in an h-wide, w-tall window at
 // (x, y): each physical row is one column of the block, read straight out of LVGL's draw
 // buffer into the driver's DMA buffer. 90° (cw) takes column r bottom-up, 270° takes
-// column w-1-r top-down. (Locals, not t's fields, in the loop, so each field is read once
-// whatever the compiler's aliasing rules.)
+// column w-1-r top-down. (Locals, not t's fields, in the loop: under -fno-strict-aliasing
+// every store to dst would otherwise reload them.)
 struct TurnSrc { const uint16_t *px; int w, h, x, y; bool cw; };
 static void row_from_lvgl_turned(uint16_t *dst, int y, void *ctx) {
     const TurnSrc &t = *(const TurnSrc *)ctx;
@@ -921,7 +926,6 @@ static void rounder_cb(lv_disp_drv_t *drv, lv_area_t *area) {
     area->y2 |= 1;
 }
 
-// LVGL monitor_cb: one screen refresh done (GET /perf).
 static void monitor_cb(lv_disp_drv_t *drv, uint32_t ms, uint32_t px) {
     (void)drv;
     perf::refresh(ms, px);
@@ -1062,7 +1066,7 @@ bool begin() {
     s_disp_drv.ver_res  = SCREEN_H;
     s_disp_drv.flush_cb = flush_cb;
     s_disp_drv.rounder_cb = rounder_cb;     // CO5300 needs 2-px-aligned windows
-    s_disp_drv.monitor_cb = monitor_cb;     // GET /perf: refresh timing
+    s_disp_drv.monitor_cb = monitor_cb;     // refresh timing for GET /perf
     s_disp_drv.draw_buf = &s_draw_buf;
     lv_disp_drv_register(&s_disp_drv);
 

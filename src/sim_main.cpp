@@ -1,6 +1,6 @@
 // Native (Mac/Linux) LVGL simulator for Capsule Radar.
-// Runs the SAME LVGL UI (include/lv_conf.h + ui_boot) in an SDL2 window — no
-// hardware, no Arduino_GFX. Only compiled for the `native` PlatformIO env.
+// Runs the SAME LVGL UI (include/lv_conf.h + ui.cpp) in an SDL2 window — no
+// hardware, no panel driver. Only compiled for the `native` PlatformIO env.
 //
 //   pio run -e native            # build
 //   pio run -e native -t exec    # build + run (or run .pio/build/native/program)
@@ -304,8 +304,10 @@ int main(int argc, char **argv) {
             ui_set_status(true, true, -58, clk);   // mock: connected, fresh, strong signal
             ui_set_battery(78, false, true);   // mock battery
             ui_set_date("08 Jun 2026");        // mock date
-            ui_set_netinfo("Configure at\ncapsuleradar.local\n192.168.1.42");  // mock net info
+            ui_set_netinfo("Configure at\ncapsuleradar.local\n192.168.1.42  |  38.84090, 0.10590");  // mock net info
             ui_set_feed_source("api.airplanes.live");                          // mock feed source
+            ui_set_feed_age(2000);                                             // mock: last good poll 2 s ago
+            ui_set_gps(2, 7, 120.0f);                                          // mock: GPS fix, 7 satellites
         }
         // fulfil route lookups with a mock (the sim has no network)
         char wc[12];
@@ -364,44 +366,63 @@ int main(int argc, char **argv) {
                 mock_step(1.0);
                 radar::update(g_mockAcs, g_set);
             }
+            radar::setTheme(THEME_MILITARY);             // the plain scope, nothing selected
+            ui_show_view(0);
+            ui_on_data_updated();
+            lv_refr_now(NULL);
+            save_shot(shotPath, "scope");
             radar::select(0);                            // select an aircraft so the card shows
             ui_on_data_updated();
             { char wc[12]; if (route_pending(wc, sizeof(wc))) route_store(wc, "Puerto del Rosario", "Frankfurt am Main"); }   // long: exercises the card's dot-out
             ui_on_data_updated();                        // pick up the mock route for the card
-            int ow, oh;
-            SDL_GetRendererOutputSize(s_ren, &ow, &oh);
             struct Shot { const char *name; int view; int theme; bool forecast; int units; };
-            const Shot shots[9] = {
+            const Shot shots[] = {
                 { "radar",  0, THEME_PHOSPHOR, false, 0 },
                 { "orb", 0, THEME_ORB, false, 0 },
                 { "amber",  0, THEME_AMBER, false, 0 },
                 { "military",0, THEME_MILITARY, false, 0 },
                 { "metric", 0, THEME_PHOSPHOR, false, 1 },   // scope labels + card in metres
                 { "list",   1, THEME_PHOSPHOR, false, 0 },
+                { "list-military", 1, THEME_MILITARY, false, 0 },
                 { "stats",  2, THEME_PHOSPHOR, false, 0 },
+                { "stats-amber", 2, THEME_AMBER, false, 0 },
                 { "weather",3, THEME_PHOSPHOR, false, 0 },
                 { "forecast",3, THEME_PHOSPHOR, true, 0 },
             };
-            for (int v = 0; v < 9; ++v) {
-                ui_set_units(shots[v].units);
+            for (const Shot &s : shots) {
+                ui_set_units(s.units);
                 ui_set_range_km(g_set.rangeKm);   // like handleUnits() on the device: zoom label,
                 ui_on_data_updated();             // then the card/list in the new units
-                radar::setTheme(shots[v].theme);
-                ui_set_weather_forecast(shots[v].forecast);
-                ui_show_view(shots[v].view);
+                radar::setTheme(s.theme);
+                ui_set_weather_forecast(s.forecast);
+                ui_show_view(s.view);
                 lv_refr_now(NULL);                       // force the view into the buffer
-                SDL_RenderClear(s_ren);
-                SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
-                SDL_Surface *surf = SDL_CreateRGBSurfaceWithFormat(0, ow, oh, 32, SDL_PIXELFORMAT_ARGB8888);
-                if (surf) {
-                    SDL_RenderReadPixels(s_ren, NULL, SDL_PIXELFORMAT_ARGB8888, surf->pixels, surf->pitch);
-                    char path[300];
-                    snprintf(path, sizeof(path), "%s-%s.bmp", shotPath, shots[v].name);
-                    SDL_SaveBMP(surf, path);
-                    SDL_FreeSurface(surf);
-                    printf("[sim] saved %s\n", path);
-                }
+                save_shot(shotPath, s.name);
             }
+            ui_set_units(0);
+            // the card moves to the top when the plane it describes sits low on the scope
+            for (int i = 0; i < radar::count(); ++i) {
+                AcInfo in;
+                if (radar::info(i, in) && strcmp(in.call, "VLG28PK") == 0) { radar::selectHex(in.hex); break; }
+            }
+            radar::setTheme(THEME_MILITARY);
+            ui_show_view(0);
+            ui_on_data_updated();
+            lv_refr_now(NULL);
+            save_shot(shotPath, "card-top");
+            // the status pull-down and the status note, Military, nothing selected
+            radar::select(-1);
+            ui_on_data_updated();
+            ui_set_pulldown(true);
+            lv_refr_now(NULL);
+            save_shot(shotPath, "pulldown");
+            ui_set_pulldown(false);
+            ui_set_status(false, false, -127, "14:05");   // just for the shot: WiFi down
+            lv_refr_now(NULL);
+            save_shot(shotPath, "nowifi");
+            ui_set_status(true, true, -58, "14:05");      // back to the mock status
+            radar::select(0);
+            ui_on_data_updated();
             // the idle clock, fully entered, on the radar view
             radar::setClockTimeSource(sim_clock_fixed);
             ui_show_view(0);
