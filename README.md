@@ -145,7 +145,7 @@ Browse to `http://capsuleradar.local/` (or the device IP) on the same WiFi to se
 src/
   config.h           pins + tunables (Dénia, Spain by default)
   main.cpp           tasks, WiFi/NTP, web config, brightness/IMU glue
-  display.*          CO5300 (Arduino_GFX) + LVGL bring-up
+  display.*          CO5300 panel (co5300.*, QSPI + DMA) + LVGL bring-up
   radar_view.*       the radar scope, aircraft, themes
   ui.*               views (radar/list/stats) + detail card + HUD
   touch_cst9217.*    capacitive touch driver

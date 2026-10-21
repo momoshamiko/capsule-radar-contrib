@@ -566,7 +566,7 @@ static void interp_step(void) {
 namespace radar { static void sweep_sync(); }
 
 // One scene step of the idle clock (ClockFrame::stage): dim the scene, hide the labels, swap
-// N/E/S/W for the dial. LVGL repaints take ~150-200 ms on the device, so the scene changes in
+// N/E/S/W for the dial. A full LVGL repaint takes ~0.1 s on the device, so the scene changes in
 // a few steps, each one full repaint; what moves is drawn every frame (by the compositor, or
 // by clock_draw_cb without one). Only ever called from the LVGL timer, never mid-render.
 static void apply_clock_stage(int stage) {
@@ -1392,6 +1392,7 @@ bool setClock(bool on) {
 }
 
 bool clockRequested() { return s_clock.requested(); }
+bool clockActive() { return s_clock.phase() != ClockFace::OFF; }
 
 float clockProgress() {
     if (s_clock.phase() == ClockFace::OFF) return 0.0f;

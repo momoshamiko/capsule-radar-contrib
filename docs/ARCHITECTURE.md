@@ -5,13 +5,13 @@
 - **Render loop (core 1 / Arduino `loop()`)**: drives `lv_timer_handler()`, copies the aircraft snapshot under the mutex, and renders the active view. No blocking calls here.
 
 ```
-[airplanes.live · adsb.fi · adsb.lol] --HTTPS--> adsb_task (core0) --mutex--> g_aircraft[] <--mutex-- render (core1) --> LVGL/Arduino_GFX --> AMOLED
+[airplanes.live · adsb.fi · adsb.lol] --HTTPS--> adsb_task (core0) --mutex--> g_aircraft[] <--mutex-- render (core1) --> LVGL/co5300 (QSPI, DMA) --> AMOLED
                                                                                   ^ touch (CST9217/FT3168) -> hit test
 ```
 
 ## Memory
-- Full RGB565 framebuffer = 466×466×2 ≈ **434 KB** → PSRAM. Double-buffer fits easily in 8 MB.
-- Allocate LVGL draw buffers in PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`); keep partial-render buffers if full-frame proves heavy.
+- The panel keeps its own GRAM, so there is no scanout framebuffer. LVGL draws into one 466×40 strip buffer in internal DMA RAM (PSRAM if that allocation fails); at 0° and 180° the driver sends strips straight from it when it is DMA-capable (`co5300::pushInPlace`).
+- PSRAM holds the sweep compositor's copy of the panel and its bearing map (466×466×2 bytes each), the scope cache (466×466 RGB565) and, for arbitrary rotation angles, a full logical frame.
 
 ## Rendering the scope
 The scope's static part is one full-screen RGB565 cache in `radar_view.cpp`, shown by one image

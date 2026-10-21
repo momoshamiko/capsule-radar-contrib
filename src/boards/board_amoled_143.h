@@ -40,7 +40,7 @@
 // ---------- Touch ----------
 // The FT3168 has no dedicated reset line broken out: its reset is tied to the panel
 // reset (GPIO21), so it only appears on the bus AFTER the LCD has been initialised.
-// display::begin() already calls gfx->begin() before touch_begin(), which is what
+// display::begin() already calls co5300::begin() before touch_begin(), which is what
 // makes this work -- do not reorder those two.
 #define TOUCH_DRIVER_FT3168 1
 #define I2C_ADDR_TOUCH      0x38           // confirmed; chip id reg 0xA3 reads 0x64

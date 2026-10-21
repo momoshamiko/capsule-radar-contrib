@@ -91,6 +91,7 @@ void setUnits(int preset);                       // 0 = feet · 1 = metres (scop
 // animating away (ask again).
 bool  setClock(bool on);
 bool  clockRequested();                     // entering or shown
+bool  clockActive();                        // entering, shown or exiting: its hands still move
 float clockProgress();                      // 0 = radar ... 1 = clock, animated (brightness ramp)
 bool  clockFrame(ClockFrame& out);          // compositor: the frame now; false when the clock is off
 bool  emergencyInRange();                   // an in-range aircraft squawks 7500/7600/7700

@@ -4,7 +4,7 @@
 //
 // This chip has no reset line of its own on this board — it is wired to the panel
 // reset — so it only answers on I2C once the display has been initialised. That is
-// why display::begin() must call gfx->begin() before touch_begin(); with the stock
+// why display::begin() must call co5300::begin() before touch_begin(); with the stock
 // 1.75 firmware's pin map nothing on the bus answered at all.
 #include "touch.h"
 #include "config.h"

@@ -35,7 +35,7 @@ first build is slow. Known issue: the picture shifts sideways (#49).
 
 ## Stack decision
 **PlatformIO + Arduino framework.** Libraries:
-- `moononournation/GFX Library for Arduino` (Arduino_GFX) — CO5300 QSPI panel driver + framebuffer.
+- Own CO5300 QSPI driver (`src/co5300.*`, ESP-IDF `spi_master` + DMA). It replaced `moononournation/GFX Library for Arduino` (Arduino_GFX), and keeps that library's init sequence and framing.
 - `lvgl/lvgl` (v8.x or v9.x) — UI screens, touch input, widgets.
 - `bblanchon/ArduinoJson` (v7) — parse the ADS-B feed.
 - WiFi / WiFiClientSecure / HTTPClient (built-in).
@@ -62,7 +62,7 @@ Three readsb-compatible REST providers, tried in order and each paced independen
 ## Architecture (full detail in docs/ARCHITECTURE.md)
 - **Core 0 task** (`adsb_task`): WiFi keepalive, fetch + parse the feed every `POLL_INTERVAL_MS`, write into a shared `std::vector<Aircraft>` guarded by a FreeRTOS mutex.
 - **Core 1 / Arduino loop**: LVGL tick + render. Reads the aircraft list under the mutex, projects lat/lon → screen (see `geo.*`), draws the scope, sweep, trails, glyphs, labels and the active detail card.
-- 8 MB PSRAM easily holds a full RGB565 framebuffer (466×466×2 ≈ 434 KB) and double-buffer; allocate LVGL draw buffers in PSRAM.
+- The panel keeps its own GRAM (no scanout framebuffer). LVGL draws into one 466×40 strip buffer in internal DMA RAM (PSRAM if that allocation fails); the sweep compositor's copy of the panel, its bearing map, the scope cache and the frame for arbitrary rotation angles live in PSRAM.
 - Settings (WiFi creds, home lat/lon, range, units, theme) in NVS (`Preferences`). First boot opens a **captive portal** (WiFiManager) for the WiFi credentials only; the rest is configured on the device's web page. **OTA** via ArduinoOTA.
 
 ## Repo layout

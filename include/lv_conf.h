@@ -15,8 +15,8 @@
    COLOR SETTINGS
  *====================*/
 #define LV_COLOR_DEPTH 16
-/* 0: native RGB565 order — paired with gfx->draw16bitRGBBitmap() in the flush_cb.
-   If colors look byte-swapped on hardware, set this to 1 and use draw16bitBeRGBBitmap(). */
+/* 0: native RGB565 order. display.cpp swaps the two bytes of each pixel for the panel as it
+   pushes (swap_row), and the sweep compositor works in this order too. */
 #define LV_COLOR_16_SWAP 0
 #define LV_COLOR_SCREEN_TRANSP 0
 #define LV_COLOR_MIX_ROUND_OFS 0

@@ -54,7 +54,7 @@ Same 466×466 CO5300 panel, 8 MB PSRAM / 16 MB flash. Differences that matter:
   would drive the panel's own bus lines.
 - The FT3168 has **no reset line of its own**; it is tied to the panel reset (GPIO 21) and
   does not appear on I2C at all until the display has been initialised. `display::begin()`
-  therefore must keep `gfx->begin()` ahead of `touch_begin()`.
+  therefore must keep `co5300::begin()` ahead of `touch_begin()`.
 - IMU and RTC are the same parts at the same addresses as the 1.75.
 
 | Signal | GPIO | | Signal | GPIO |
