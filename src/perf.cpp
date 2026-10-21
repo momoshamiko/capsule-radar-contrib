@@ -1,8 +1,8 @@
 // Render-path timing counters and the on-device benchmark (see perf.h).
 #include "perf.h"
-#include "config.h"
 #include "display.h"
 #include "ui.h"
+#include "co5300.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -13,7 +13,7 @@
 namespace perf {
 
 static const char *const NAMES[SLOT_COUNT] = {
-    "loop", "lvgl", "flush", "push", "compose", "feed", "gps", "web", "touch_gap",
+    "loop", "lvgl", "flush", "push", "push_fill", "push_wait", "push_cmd", "compose", "feed", "gps", "web", "touch_gap",
 };
 
 struct Acc { uint64_t totalUs; uint32_t count; uint32_t maxUs; };
@@ -44,8 +44,8 @@ size_t report(char *out, size_t n) {
     const auto put = [&](const char *fmt, auto... args) {
         if (k < n) k += (size_t)snprintf(out + k, n - k, fmt, args...);
     };
-#if defined(LCD_QSPI_HZ)     // the LCD 2.1 has no QSPI panel bus: its report omits the clock
-    put("up_ms %lu qspi_khz %d\n", (unsigned long)millis(), (int)(LCD_QSPI_HZ / 1000));
+#if !defined(BOARD_LCD21)     // co5300.cpp (the QSPI panel) is not built for the LCD 2.1
+    put("up_ms %lu qspi_khz %d\n", (unsigned long)millis(), co5300::clockKhz());
 #else
     put("up_ms %lu\n", (unsigned long)millis());
 #endif
@@ -63,19 +63,34 @@ size_t report(char *out, size_t n) {
         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
         (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    // CPU time per task since boot (FreeRTOS run-time stats, esp_timer microseconds): two
+    // reads give each core's load from its IDLE task.
+    static const UBaseType_t MAX_TASKS = 32;
+    static TaskStatus_t *ts = (TaskStatus_t *)ps_malloc(MAX_TASKS * sizeof(TaskStatus_t));
+    if (ts) {
+        uint32_t total = 0;
+        const UBaseType_t nt = uxTaskGetSystemState(ts, MAX_TASKS, &total);
+        put("# task name core runtime_us\n");
+        for (UBaseType_t i = 0; i < nt; ++i)
+            put("task %s %d %lu\n", ts[i].pcTaskName, (int)(ts[i].xCoreID > 1 ? -1 : ts[i].xCoreID),
+                (unsigned long)ts[i].ulRunTimeCounter);
+    }
     return k < n ? k : n;
 }
 
 // Where a measured stretch went: compositor ticks, flushing (LVGL strips to the panel) and
-// the rest (LVGL's own rendering and timers), in ms.
-struct Split { uint64_t compose, flush; uint32_t flushes, t0; };
+// the rest (LVGL's own rendering and timers), in ms; and inside all pushes, the time spent
+// filling DMA buffers, waiting for them and sending window commands.
+struct Split { uint64_t compose, flush, fill, wait, cmd; uint32_t flushes, t0; };
 static Split split_start() {
-    return Split{ s_acc[COMPOSE].totalUs, s_acc[FLUSH].totalUs, s_acc[FLUSH].count, nowUs() };
+    return Split{ s_acc[COMPOSE].totalUs, s_acc[FLUSH].totalUs, s_acc[PUSH_FILL].totalUs,
+                  s_acc[PUSH_WAIT].totalUs, s_acc[PUSH_CMD].totalUs, s_acc[FLUSH].count, nowUs() };
 }
+static uint32_t ms_since(uint64_t now, uint64_t then) { return (uint32_t)((now - then + 500) / 1000); }
 static void split_put(const Split &s, uint32_t *total, uint32_t *compose, uint32_t *flush) {
     *total = (nowUs() - s.t0 + 500) / 1000;
-    *compose = (uint32_t)((s_acc[COMPOSE].totalUs - s.compose + 500) / 1000);
-    *flush = (uint32_t)((s_acc[FLUSH].totalUs - s.flush + 500) / 1000);
+    *compose = ms_since(s_acc[COMPOSE].totalUs, s.compose);
+    *flush = ms_since(s_acc[FLUSH].totalUs, s.flush);
 }
 
 // One animated page change, driven like loop() drives LVGL, until the tileview stops.
@@ -118,13 +133,15 @@ size_t bench(char *out, size_t n) {
         uint32_t ms, fr, c, f;
         Split s;
         bench_page(1, &ms, &fr, &c, &f, &s);
-        put("bench_page radar->list ms %lu frames %lu compose %lu flush %lu (strips %lu)\n",
+        put("bench_page radar->list ms %lu frames %lu compose %lu flush %lu (strips %lu fill %lu wait %lu cmd %lu)\n",
             (unsigned long)ms, (unsigned long)fr, (unsigned long)c, (unsigned long)f,
-            (unsigned long)(s_acc[FLUSH].count - s.flushes));
+            (unsigned long)(s_acc[FLUSH].count - s.flushes), (unsigned long)ms_since(s_acc[PUSH_FILL].totalUs, s.fill),
+            (unsigned long)ms_since(s_acc[PUSH_WAIT].totalUs, s.wait), (unsigned long)ms_since(s_acc[PUSH_CMD].totalUs, s.cmd));
         bench_page(0, &ms, &fr, &c, &f, &s);
-        put("bench_page list->radar ms %lu frames %lu compose %lu flush %lu (strips %lu)\n",
+        put("bench_page list->radar ms %lu frames %lu compose %lu flush %lu (strips %lu fill %lu wait %lu cmd %lu)\n",
             (unsigned long)ms, (unsigned long)fr, (unsigned long)c, (unsigned long)f,
-            (unsigned long)(s_acc[FLUSH].count - s.flushes));
+            (unsigned long)(s_acc[FLUSH].count - s.flushes), (unsigned long)ms_since(s_acc[PUSH_FILL].totalUs, s.fill),
+            (unsigned long)ms_since(s_acc[PUSH_WAIT].totalUs, s.wait), (unsigned long)ms_since(s_acc[PUSH_CMD].totalUs, s.cmd));
     }
     if (view != 0) ui_show_view(view);
     return k < n ? k : n;

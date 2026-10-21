@@ -1087,7 +1087,7 @@ static void handleGps() {   // auto-set the centre point from the LC76G GPS (-G 
 static void handlePerf() {
     const bool bench = g_web.hasArg("bench");
     if (bench && refuseUnlessPageFetch()) return;
-    static const size_t BUFSZ = 2048;
+    static const size_t BUFSZ = 4096;             // room for the per-task lines after the counters
     static char *buf = (char *)ps_malloc(BUFSZ);   // PSRAM, like the config page buffer
     if (!buf) return;
     size_t k = perf::report(buf, BUFSZ);

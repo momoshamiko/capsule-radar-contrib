@@ -14,6 +14,9 @@ enum Slot : uint8_t {
     LVGL,       // lv_timer_handler(): LVGL timers, rendering and flushing
     FLUSH,      // flush_cb: one strip saved, blended and pushed (its compositor tick excluded)
     PUSH,       // panel pushes: LVGL strips and compositor windows (fill + transfer)
+    PUSH_FILL,  // ...rows made ready for the panel (copy or gather, blend, byte swap)
+    PUSH_WAIT,  // ...waiting for a DMA buffer or the end of a stream
+    PUSH_CMD,   // ...window commands (CASET/PASET/RAMWR)
     COMPOSE,    // a compositor tick that drew something
     FEED,       // a new aircraft snapshot: radar::update, ui_on_data_updated, alert sounds
     GPS,        // gps_poll(), including the display loop it runs while it waits (also in LVGL)

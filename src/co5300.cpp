@@ -4,6 +4,7 @@
 #if !defined(BOARD_LCD21)     // the LCD 2.1 has no CO5300: display_st7701.cpp drives its RGB panel
 #include "co5300.h"
 #include "config.h"
+#include "perf.h"
 
 #include <Arduino.h>
 #include <driver/spi_master.h>
@@ -121,7 +122,10 @@ static void window(int x, int y, int w, int h) {
 }
 
 static void open_window(int x, int y, int w, int h) {
-    window(x, y, w, h);
+    {
+        perf::Scope t(perf::PUSH_CMD);
+        window(x, y, w, h);
+    }
     cs_low();
     s_open = true;
 }
@@ -150,8 +154,14 @@ void push(int x, int y, int w, int h, RowFn fn, void *ctx) {
     for (int r = 0; r < h;) {
         const int n = rowsPer < h - r ? rowsPer : h - r;
         uint16_t *dst = s_buf[s_next];
-        for (int i = 0; i < n; ++i) fn(dst + (size_t)i * w, y + r + i, ctx);
-        wait_done();
+        {
+            perf::Scope t(perf::PUSH_FILL);         // while the other buffer is on the wire
+            for (int i = 0; i < n; ++i) fn(dst + (size_t)i * w, y + r + i, ctx);
+        }
+        {
+            perf::Scope t(perf::PUSH_WAIT);
+            wait_done();
+        }
         send(dst, (size_t)n * w, r == 0);
         s_next ^= 1;
         r += n;
@@ -169,11 +179,18 @@ void pushInPlace(int x, int y, int w, int h, uint16_t *px, RowFn prep, void *ctx
     for (int r = 0; r < h;) {
         const int n = rowsPer < h - r ? rowsPer : h - r;
         uint16_t *blk = px + (size_t)r * w;
-        for (int i = 0; i < n; ++i) prep(blk + (size_t)i * w, y + r + i, ctx);
-        wait_done();
+        {
+            perf::Scope t(perf::PUSH_FILL);         // while the block before it is on the wire
+            for (int i = 0; i < n; ++i) prep(blk + (size_t)i * w, y + r + i, ctx);
+        }
+        {
+            perf::Scope t(perf::PUSH_WAIT);
+            wait_done();
+        }
         send(blk, (size_t)n * w, r == 0);
         r += n;
     }
+    perf::Scope t(perf::PUSH_WAIT);
     stream_end();                                   // px is the caller's again
 }
 
